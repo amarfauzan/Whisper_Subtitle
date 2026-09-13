@@ -4,6 +4,7 @@ whisper:
   language: ko
   beam_size: 3
   best_of: 3
+  max_line_length: 30
 
 vad:
   min_subtitle_duration: 0.5

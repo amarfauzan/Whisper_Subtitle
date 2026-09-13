@@ -10,10 +10,11 @@ from dotenv import load_dotenv
 class WhisperConfig:
     cli: Path
     model: Path
+    vad_model: Path
     language: str
     beam_size: int
     best_of: int
-
+    max_line_length: int
 
 @dataclass(frozen=True)
 class VadConfig:
@@ -38,9 +39,11 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
         whisper=WhisperConfig(
             cli=Path(os.environ["WHISPER_CLI"]),
             model=Path(os.environ["WHISPER_MODEL"]),
+            vad_model=Path(os.environ["VAD_MODEL"]),
             language=raw["whisper"]["language"],
             beam_size=raw["whisper"]["beam_size"],
             best_of=raw["whisper"]["best_of"],
+            max_line_length=raw["whisper"]["max_line_length"],
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),
