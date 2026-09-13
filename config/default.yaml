@@ -9,3 +9,4 @@ whisper:
 vad:
   min_subtitle_duration: 0.5
   max_subtitle_duration: 7.0
+  max_merge_duration: 2.0

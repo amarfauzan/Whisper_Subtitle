@@ -15,12 +15,10 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class WhisperResult:
-    """Paths to the files whisper produced, plus the parsed segments."""
+    """Parsed segments plus the path to the JSON they came from."""
 
     segments: list[WhisperSegment]
-    txt_path: Path
     json_path: Path
-    srt_path: Path
 
 
 def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
@@ -73,27 +71,21 @@ def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
 def run_whisper(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
     """Run whisper-cli on an audio file and return the parsed result.
 
-    Writes three files next to the audio file (same stem):
-        <stem>.txt, <stem>.json, <stem>.srt
-
-    If those files already exist, skips the run and reuses them. This is
-    what makes the pipeline resumable across long videos.
+    Produces one file next to the audio: <stem>.json.
+    If it already exists, skips the run and reuses it — this is what makes
+    the pipeline resumable across long videos.
     """
     if not audio_path.exists():
         raise WhisperError(f"Audio file not found: {audio_path}")
 
     output_base = audio_path.with_suffix("")
-    txt_path = output_base.with_suffix(".txt")
     json_path = output_base.with_suffix(".json")
-    srt_path = output_base.with_suffix(".srt")
 
-    if txt_path.exists() and json_path.exists() and srt_path.exists():
+    if json_path.exists():
         log.info("Whisper output already exists, skipping: %s", audio_path.name)
         return WhisperResult(
             segments=parse_whisper_json(json_path),
-            txt_path=txt_path,
             json_path=json_path,
-            srt_path=srt_path,
         )
 
     command = [
@@ -102,9 +94,7 @@ def run_whisper(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
         "-l", cfg.language,
         "-bs", str(cfg.beam_size),
         "-bo", str(cfg.best_of),
-        "-otxt",
-        "-oj",
-        "-osrt",
+        "-oj",  # JSON only — SRT and TXT are derived downstream
         "--vad",
         "-vm", str(cfg.vad_model),
         "-sow",  # split on word boundaries
@@ -130,13 +120,10 @@ def run_whisper(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
             f"{result.stderr.strip()}"
         )
 
-    for path in (txt_path, json_path, srt_path):
-        if not path.exists():
-            raise WhisperError(f"Whisper did not produce: {path}")
+    if not json_path.exists():
+        raise WhisperError(f"Whisper did not produce: {json_path}")
 
     return WhisperResult(
         segments=parse_whisper_json(json_path),
-        txt_path=txt_path,
         json_path=json_path,
-        srt_path=srt_path,
     )
