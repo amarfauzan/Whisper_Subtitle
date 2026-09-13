@@ -20,13 +20,21 @@ _SEGMENT_RE = re.compile(
     r"end\s*=\s*([\d.]+)"
 )
 
+# Matches the summary line whisper-vad-speech-segments always prints:
+#   whisper_vad_segments_from_probs: Final speech segments after filtering: 12
+_COMPLETION_RE = re.compile(
+    r"Final speech segments after filtering:\s*\d+"
+)
+
 
 def parse_vad_output(text: str) -> list[VadSegment]:
     """Parse the stderr output of whisper-vad-speech-segments.
 
-    Returns VadSegment objects sorted by index. Raises VadError if no
-    segments are found — an empty result almost always means the binary
-    failed silently, not that the audio was silent.
+    Returns VadSegment objects sorted by index.
+
+    Raises VadError only if the executable did not produce a recognizable
+    completion line — that means it likely crashed before finishing. A
+    clean run that found zero segments returns an empty list.
     """
     segments = [
         VadSegment(
@@ -37,11 +45,17 @@ def parse_vad_output(text: str) -> list[VadSegment]:
         for m in _SEGMENT_RE.finditer(text)
     ]
 
-    if not segments:
-        raise VadError("No VAD segments found in the executable output.")
+    if segments:
+        return segments
 
-    return segments
+    # No segments found. Did VAD actually complete?
+    if _COMPLETION_RE.search(text):
+        return []  # valid: no speech in this audio
 
+    raise VadError(
+        "VAD executable produced no segments and no completion line. "
+        "It probably crashed — check the stderr above."
+    )
 
 def run_vad(audio_path: Path, cfg: VadConfig) -> list[VadSegment]:
     """Run the VAD executable and return the parsed segments."""

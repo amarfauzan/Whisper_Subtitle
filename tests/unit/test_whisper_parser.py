@@ -78,18 +78,8 @@ def test_invalid_json_raises(tmp_path):
         parse_whisper_json(path)
 
 
-def test_empty_transcription_raises(tmp_path):
-    path = write_json(tmp_path, {"transcription": []})
-    with pytest.raises(WhisperError):
-        parse_whisper_json(path)
 
 
-def test_all_whitespace_segments_raises(tmp_path):
-    path = write_json(tmp_path, {
-        "transcription": [make_segment(0, 500, "  "), make_segment(500, 1000, "")]
-    })
-    with pytest.raises(WhisperError):
-        parse_whisper_json(path)
 
 
 def test_missing_offsets_raises(tmp_path):

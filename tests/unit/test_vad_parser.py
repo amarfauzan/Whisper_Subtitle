@@ -51,3 +51,38 @@ def test_empty_output_raises():
 def test_output_without_segments_raises():
     with pytest.raises(VadError):
         parse_vad_output("whisper_vad_segments_from_probs: found 0 segments\n")
+
+def test_empty_output_raises():
+    # No output at all — VAD produced nothing. This is an error.
+    with pytest.raises(VadError):
+        parse_vad_output("")
+
+
+def test_output_without_completion_line_raises():
+    # Some lines but no completion summary — binary crashed mid-run.
+    with pytest.raises(VadError):
+        parse_vad_output(
+            "ggml_vulkan: Found 1 Vulkan devices:\n"
+            "whisper_vad_segments_from_probs: reading audio\n"
+        )
+
+
+def test_zero_segments_returns_empty_list():
+    # VAD ran cleanly and found no speech. Valid — return empty.
+    output = (
+        "whisper_vad_segments_from_probs: "
+        "Final speech segments after filtering: 0\n"
+    )
+    assert parse_vad_output(output) == []
+
+
+def test_segments_with_completion_line():
+    # Normal case: segments plus the summary line.
+    output = (
+        "VAD segment 0: start = 0.48, end = 2.34\n"
+        "VAD segment 1: start = 2.88, end = 5.12\n"
+        "whisper_vad_segments_from_probs: "
+        "Final speech segments after filtering: 2\n"
+    )
+    segments = parse_vad_output(output)
+    assert len(segments) == 2

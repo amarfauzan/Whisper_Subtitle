@@ -1,6 +1,7 @@
 """Core data types shared across the pipeline."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -40,3 +41,10 @@ class Subtitle:
     @property
     def duration(self) -> float:
         return self.end - self.start
+
+@dataclass(frozen=True)
+class Chunk:
+    """A video chunk plus its start time in the original video."""
+
+    path: Path
+    offset: float

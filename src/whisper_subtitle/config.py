@@ -20,9 +20,7 @@ class WhisperConfig:
 class VadConfig:
     exe: Path
     model: Path
-    min_subtitle_duration: float
-    max_subtitle_duration: float
-
+    max_merge_duration: float
 
 @dataclass(frozen=True)
 class Config:
@@ -48,7 +46,6 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),
             model=Path(os.environ["VAD_MODEL"]),
-            min_subtitle_duration=raw["vad"]["min_subtitle_duration"],
-            max_subtitle_duration=raw["vad"]["max_subtitle_duration"],
+            max_merge_duration=raw["vad"]["max_merge_duration"],
         ),
     )

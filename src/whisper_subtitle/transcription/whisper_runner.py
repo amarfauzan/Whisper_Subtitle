@@ -24,9 +24,9 @@ class WhisperResult:
 def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
     """Parse a whisper.cpp JSON output file into WhisperSegment objects.
 
-    whisper.cpp emits both `offsets` (milliseconds) and `timestamps`
-    (HH:MM:SS,mmm strings) per segment. We prefer `offsets` — it's already
-    numeric, so no parsing or rounding is involved.
+    Returns an empty list if whisper ran cleanly but produced no segments
+    (for example, on an audio track with no speech). Raises WhisperError
+    only if the file is missing, unreadable, or malformed.
     """
     if not json_path.exists():
         raise WhisperError(f"Whisper JSON not found: {json_path}")
@@ -37,10 +37,8 @@ def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
         raise WhisperError(f"Invalid whisper JSON in {json_path}: {exc}") from exc
 
     raw_segments = data.get("transcription") or []
-    if not raw_segments:
-        raise WhisperError(f"No segments in whisper JSON: {json_path}")
 
-    segments = []
+    segments: list[WhisperSegment] = []
     for item in raw_segments:
         try:
             start_ms = item["offsets"]["from"]
@@ -61,9 +59,6 @@ def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
                 text=text,
             )
         )
-
-    if not segments:
-        raise WhisperError(f"All whisper segments were empty: {json_path}")
 
     return segments
 
