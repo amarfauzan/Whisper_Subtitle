@@ -1,0 +1,10 @@
+chunk_length_seconds: 600
+
+whisper:
+  language: ko
+  beam_size: 3
+  best_of: 3
+
+vad:
+  min_subtitle_duration: 0.5
+  max_subtitle_duration: 7.0

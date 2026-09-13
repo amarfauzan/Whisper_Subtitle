@@ -10,11 +10,12 @@ dependencies = [
 ]
 
 [project.scripts]
-whisper-subtitle = "whisper_subtitle:main"
+whisper-subtitle = "whisper_subtitle.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
+
 
 [dependency-groups]
 dev = [
@@ -23,3 +24,6 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.7",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/whisper_subtitle"]
