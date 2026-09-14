@@ -65,5 +65,7 @@ def _process_chunk(chunk: Chunk, cfg: Config) -> list[Subtitle]:
 def _run_translation(srt_path: Path, cfg: Config) -> None:
     """Optional translation step. Imported lazily so the rest of the
     pipeline works even if translation dependencies are broken."""
-    from whisper_subtitle.translation.translator import translate_srt
-    translate_srt(srt_path, cfg)
+    from whisper_subtitle.translation.translator import translate_srt_file
+
+    translated = translate_srt_file(srt_path, cfg.translation)
+    log.info("Translated SRT: %s", translated)

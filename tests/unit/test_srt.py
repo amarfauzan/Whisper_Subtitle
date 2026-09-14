@@ -9,6 +9,69 @@ from whisper_subtitle.subtitles.srt import (
 )
 
 
+from whisper_subtitle.subtitles.srt import parse_srt, render_srt
+
+
+class TestParseSrt:
+    def test_empty(self):
+        assert parse_srt("") == []
+        assert parse_srt("   \n\n  ") == []
+
+    def test_single(self):
+        text = (
+            "1\n"
+            "00:00:01,000 --> 00:00:02,500\n"
+            "hello\n"
+        )
+        subs = parse_srt(text)
+        assert len(subs) == 1
+        assert subs[0].start == 1.0
+        assert subs[0].end == 2.5
+        assert subs[0].text == "hello"
+
+    def test_multiple(self):
+        text = (
+            "1\n"
+            "00:00:01,000 --> 00:00:02,500\n"
+            "first\n"
+            "\n"
+            "2\n"
+            "00:00:03,000 --> 00:00:04,000\n"
+            "second\n"
+        )
+        subs = parse_srt(text)
+        assert len(subs) == 2
+        assert subs[1].text == "second"
+
+    def test_roundtrip(self):
+        original = [
+            Subtitle(start=1.0, end=2.5, text="hello"),
+            Subtitle(start=3.0, end=4.0, text="world"),
+        ]
+        assert parse_srt(render_srt(original)) == original
+
+    def test_windows_line_endings(self):
+        text = "1\r\n00:00:01,000 --> 00:00:02,500\r\nhi\r\n"
+        subs = parse_srt(text)
+        assert len(subs) == 1
+        assert subs[0].text == "hi"
+
+    def test_skips_malformed_blocks(self):
+        text = (
+            "1\n"
+            "00:00:01,000 --> 00:00:02,500\n"
+            "good\n"
+            "\n"
+            "garbage block\n"
+            "no arrow here\n"
+            "\n"
+            "2\n"
+            "00:00:03,000 --> 00:00:04,000\n"
+            "also good\n"
+        )
+        subs = parse_srt(text)
+        assert len(subs) == 2
+
 class TestTimestampToMs:
     def test_zero(self):
         assert timestamp_to_ms("00:00:00,000") == 0

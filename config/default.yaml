@@ -10,3 +10,13 @@ vad:
   min_subtitle_duration: 0.5
   max_subtitle_duration: 7.0
   max_merge_duration: 2.0
+
+translation:
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-v4-flash
+  source_language: Korean
+  target_language: English
+  batch_size: 100
+  max_retries: 3
+  min_split_size: 50
+  context: ""

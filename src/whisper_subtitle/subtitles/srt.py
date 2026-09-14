@@ -1,7 +1,42 @@
 """Pure SRT timestamp and formatting utilities."""
 
 from whisper_subtitle.models import Subtitle
+import re
 
+
+_BLOCK_RE = re.compile(r"\n\s*\n")
+
+
+def parse_srt(text: str) -> list[Subtitle]:
+    """Parse SRT-formatted text into Subtitle objects.
+
+    Handles \\r\\n and \\n line endings. Ignores blocks that don't have
+    a recognizable timestamp line.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return []
+
+    subtitles: list[Subtitle] = []
+    for block in _BLOCK_RE.split(text):
+        lines = block.splitlines()
+        if len(lines) < 2:
+            continue
+        if " --> " not in lines[1]:
+            continue
+
+        start_str, end_str = lines[1].split(" --> ", 1)
+        body = "\n".join(lines[2:]).strip()
+
+        subtitles.append(
+            Subtitle(
+                start=timestamp_to_ms(start_str) / 1000.0,
+                end=timestamp_to_ms(end_str) / 1000.0,
+                text=body,
+            )
+        )
+
+    return subtitles
 
 def timestamp_to_ms(ts: str) -> int:
     """Convert an SRT timestamp 'HH:MM:SS,mmm' to milliseconds."""
