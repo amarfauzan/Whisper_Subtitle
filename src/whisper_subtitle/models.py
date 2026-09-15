@@ -48,3 +48,29 @@ class Chunk:
 
     path: Path
     offset: float
+
+@dataclass(frozen=True)
+class OcrDetection:
+    """A text detection in a single frame."""
+
+    frame_time: float
+    box: tuple[int, int, int, int]  # x1, y1, x2, y2
+    text: str
+    angle: float
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class OcrEvent:
+    """A deduplicated group of detections spanning a time range."""
+
+    start: float
+    end: float
+    box: tuple[int, int, int, int]
+    text: str
+    frame_count: int
+    confidence: float = 1.0
+
+    @property
+    def duration(self) -> float:
+        return self.end - self.start
