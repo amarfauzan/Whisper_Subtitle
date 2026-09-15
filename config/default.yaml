@@ -37,11 +37,19 @@ ocr:
   filter:
     min_duration: 0.5
     max_duration: 8.0
-    min_confidence: 0.75
     min_box_height_ratio: 0.02
     max_box_height_ratio: 0.15
     min_text_length: 2
+    min_confidence: 0.75
+    max_text_repeats: 8
     blocklist_texts: []
     blocklist_patterns:
-      - "^[!?.…\\s]+$"
+      - "^[!?.…\\s\\(\\)\\[\\]\\{\\}]+$"
       - "^[0-9\\s]+$"
+      - "^[A-Za-z0-9\\(\\)\\s'!?.~-]{1,15}$"
+      - "^[ㅋㅎㅠㅜ]+$"
+
+  llm_filter:
+    enabled: false         # opt-in
+    batch_size: 100
+    model: deepseek-chat

@@ -110,3 +110,47 @@ def _reject_reason(
             return "pattern_match"
 
     return None
+
+def filter_repeated_texts(
+    events: list[OcrEvent],
+    max_repeats: int,
+) -> list[OcrEvent]:
+    """Drop every event whose exact text appears more than max_repeats times.
+
+    Used to remove nametags, watermarks, and persistent logos that repeat
+    identically across the whole video. Works on exact text (after
+    lowercasing and whitespace stripping), so a subtitle like
+    "hi, my name is minami" is a separate bucket from "minami" and is
+    never affected by minami being dropped.
+
+    If max_repeats <= 0, the filter is disabled and the input is returned
+    unchanged.
+    """
+    if max_repeats <= 0:
+        return list(events)
+
+    counts: dict[str, int] = {}
+    for ev in events:
+        key = _normalize_for_repeat(ev.text)
+        counts[key] = counts.get(key, 0) + 1
+
+    kept = [
+        ev for ev in events
+        if counts[_normalize_for_repeat(ev.text)] <= max_repeats
+    ]
+
+    dropped = len(events) - len(kept)
+    if dropped:
+        repeated_groups = sum(
+            1 for c in counts.values() if c > max_repeats
+        )
+        log.info(
+            "Repeat filter: dropped %d/%d events (%d text groups)",
+            dropped, len(events), repeated_groups,
+        )
+    return kept
+
+
+def _normalize_for_repeat(text: str) -> str:
+    """Lowercase and strip whitespace. Matches the grouper's normalization."""
+    return re.sub(r"\s+", "", text.lower())

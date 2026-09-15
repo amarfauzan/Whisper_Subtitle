@@ -42,6 +42,7 @@ def make_cfg(**overrides) -> OcrFilterConfig:
         min_box_height_ratio=0.02,   # 21.6 px on 1080
         max_box_height_ratio=0.15,   # 162 px on 1080
         min_text_length=2,
+        max_text_repeats=8,  
         min_confidence=0.75,
         blocklist_texts=(),
         blocklist_patterns=("^[!?.…\\s\\(\\)\\[\\]\\{\\}]+$", "^[0-9\\s]+$"),
@@ -310,3 +311,64 @@ class TestEventsToSubtitles:
         ]
         subs = events_to_subtitles(events)
         assert [s.text for s in subs] == ["first", "second"]
+
+from whisper_subtitle.ocr.filter import filter_repeated_texts
+
+
+class TestRepeatedTexts:
+    def test_drops_text_appearing_more_than_max(self):
+        events = [make_event(text="Sports Day") for _ in range(10)]
+        assert filter_repeated_texts(events, max_repeats=8) == []
+
+    def test_keeps_text_at_or_below_max(self):
+        events = [make_event(text="Sports Day") for _ in range(8)]
+        assert len(filter_repeated_texts(events, max_repeats=8)) == 8
+
+    def test_keeps_text_below_max(self):
+        events = [make_event(text="Sports Day") for _ in range(3)]
+        assert len(filter_repeated_texts(events, max_repeats=8)) == 3
+
+    def test_different_texts_counted_separately(self):
+        events = (
+            [make_event(text="Sports Day") for _ in range(10)]
+            + [make_event(text="안녕하세요")]
+        )
+        result = filter_repeated_texts(events, max_repeats=8)
+        assert len(result) == 1
+        assert result[0].text == "안녕하세요"
+
+    def test_case_insensitive(self):
+        events = (
+            [make_event(text="sports day") for _ in range(5)]
+            + [make_event(text="SPORTS DAY") for _ in range(5)]
+        )
+        assert filter_repeated_texts(events, max_repeats=8) == []
+
+    def test_whitespace_ignored(self):
+        events = (
+            [make_event(text="sportsday") for _ in range(5)]
+            + [make_event(text="sports day") for _ in range(5)]
+        )
+        assert filter_repeated_texts(events, max_repeats=8) == []
+
+    def test_substring_is_separate_bucket(self):
+        # The whole phrase "minami" repeated → dropped.
+        # But "hi, my name is minami" is a different bucket → kept.
+        events = (
+            [make_event(text="minami") for _ in range(15)]
+            + [make_event(text="hi, my name is minami") for _ in range(3)]
+        )
+        result = filter_repeated_texts(events, max_repeats=8)
+        assert len(result) == 3
+        assert all("hi, my name" in e.text for e in result)
+
+    def test_empty_input(self):
+        assert filter_repeated_texts([], max_repeats=8) == []
+
+    def test_zero_disables(self):
+        events = [make_event(text="Sports Day") for _ in range(100)]
+        assert len(filter_repeated_texts(events, max_repeats=0)) == 100
+
+    def test_negative_disables(self):
+        events = [make_event(text="Sports Day") for _ in range(100)]
+        assert len(filter_repeated_texts(events, max_repeats=-1)) == 100

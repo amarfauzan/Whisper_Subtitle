@@ -3,6 +3,28 @@ import pytest
 from whisper_subtitle.models import Subtitle
 from whisper_subtitle.subtitles.timeline import shift_timeline
 
+from whisper_subtitle.models import OcrEvent
+from whisper_subtitle.subtitles.timeline import shift_ocr_events
+
+
+class TestShiftOcrEvents:
+    def test_empty(self):
+        assert shift_ocr_events([], 10.0) == []
+
+    def test_zero_offset_returns_copy(self):
+        ev = OcrEvent(start=1.0, end=2.0, box=(0, 0, 10, 10),
+                      text="hi", frame_count=3, confidence=0.9)
+        result = shift_ocr_events([ev], 0.0)
+        assert result == [ev]
+        assert result is not [ev]
+
+    def test_shifts_both_ends(self):
+        ev = OcrEvent(start=1.0, end=2.0, box=(0, 0, 10, 10),
+                      text="hi", frame_count=3, confidence=0.9)
+        result = shift_ocr_events([ev], 600.0)
+        assert result[0].start == 601.0
+        assert result[0].end == 602.0
+        assert result[0].text == "hi"
 
 def test_empty_list():
     assert shift_timeline([], 10.0) == []

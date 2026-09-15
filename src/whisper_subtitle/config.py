@@ -48,10 +48,17 @@ class OcrFilterConfig:
     min_box_height_ratio: float
     max_box_height_ratio: float
     min_text_length: int
-    min_confidence: float          
+    min_confidence: float
+    max_text_repeats: int          # ← new
     blocklist_texts: tuple[str, ...]
     blocklist_patterns: tuple[str, ...]
 
+@dataclass(frozen=True)
+class LlmFilterConfig:
+    enabled: bool
+    model: str
+    batch_size: int
+    min_events: int
 
 @dataclass(frozen=True)
 class OcrConfig:
@@ -62,11 +69,19 @@ class OcrConfig:
     providers: tuple[str, ...]
     sample_fps: int
     rec_confidence: float
+    llm_filter: LlmFilterConfig 
     crop_top_ratio: float
     crop_bottom_ratio: float
     crop_left_ratio: float
     crop_right_ratio: float
     filter: OcrFilterConfig
+
+@dataclass(frozen=True)
+class LlmFilterConfig:
+    enabled: bool
+    model: str
+    batch_size: int
+    min_events: int
 
 @dataclass(frozen=True)
 class Config:
@@ -76,6 +91,7 @@ class Config:
     translation: TranslationConfig
     transcription: TranscriptionConfig
     ocr: OcrConfig
+
 
 
 
@@ -160,6 +176,12 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
         crop_bottom_ratio=raw.get("crop_bottom_ratio", 0.0),
         crop_left_ratio=raw.get("crop_left_ratio", 0.0),
         crop_right_ratio=raw.get("crop_right_ratio", 0.0),
+        llm_filter=LlmFilterConfig(
+            enabled=raw.get("llm_filter", {}).get("enabled", False),
+            model=raw.get("llm_filter", {}).get("model", "deepseek-chat"),
+            batch_size=raw.get("llm_filter", {}).get("batch_size", 100),
+            min_events=raw.get("llm_filter", {}).get("min_events", 5),
+        ),
         filter=OcrFilterConfig(
             min_duration=raw["filter"]["min_duration"],
             max_duration=raw["filter"]["max_duration"],
@@ -167,6 +189,7 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             max_box_height_ratio=raw["filter"]["max_box_height_ratio"],
             min_text_length=raw["filter"]["min_text_length"],
             min_confidence=raw["filter"]["min_confidence"],
+            max_text_repeats=raw["filter"]["max_text_repeats"],   
             blocklist_texts=tuple(raw["filter"].get("blocklist_texts", [])),
             blocklist_patterns=tuple(raw["filter"].get("blocklist_patterns", [])),
         ),
