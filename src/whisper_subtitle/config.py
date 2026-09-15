@@ -46,6 +46,7 @@ class OcrFilterConfig:
     min_box_height_ratio: float
     max_box_height_ratio: float
     min_text_length: int
+    min_confidence: float          
     blocklist_texts: tuple[str, ...]
     blocklist_patterns: tuple[str, ...]
 
@@ -135,7 +136,10 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             min_box_height_ratio=raw["filter"]["min_box_height_ratio"],
             max_box_height_ratio=raw["filter"]["max_box_height_ratio"],
             min_text_length=raw["filter"]["min_text_length"],
+            min_confidence=raw["filter"]["min_confidence"],        # ← new
             blocklist_texts=tuple(raw["filter"].get("blocklist_texts", [])),
             blocklist_patterns=tuple(raw["filter"].get("blocklist_patterns", [])),
         ),
     )
+
+

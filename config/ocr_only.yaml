@@ -30,12 +30,14 @@ ocr:
   sample_fps: 3
   rec_confidence: 0.6       # stricter without whisper to validate
   filter:
-    min_duration: 1.0       # stricter for the same reason
+    min_duration: 1.0
     max_duration: 8.0
     min_box_height_ratio: 0.025
     max_box_height_ratio: 0.15
     min_text_length: 2
+    min_confidence: 0.75
     blocklist_texts: []
     blocklist_patterns:
-      - "^[!?.…\\s]+$"
+      - "^[!?.…\\s\\(\\)\\[\\]\\{\\}]+$"
       - "^[0-9\\s]+$"
+      - "^[A-Za-z0-9\\(\\)\\s]{1,4}$"
