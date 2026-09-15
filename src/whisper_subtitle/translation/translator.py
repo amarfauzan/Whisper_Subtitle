@@ -110,11 +110,16 @@ def _translate_batch(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             log.debug("API call (attempt %d/%d)", attempt, cfg.max_retries)
+            extra_body = None
+            if cfg.disable_thinking:
+                extra_body = {"thinking": {"type": "disabled"}}
+
             response = client.chat.completions.create(
                 model=cfg.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 timeout=180,
+                extra_body=extra_body,
             )
             content = (response.choices[0].message.content or "").strip()
             parsed = _parse_marked_response(content, expected=len(texts))
