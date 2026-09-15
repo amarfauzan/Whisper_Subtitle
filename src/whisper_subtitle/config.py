@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -27,6 +28,7 @@ class TranslationConfig:
     api_key: str
     base_url: str
     model: str
+    disable_thinking: bool
     source_language: str
     target_language: str
     batch_size: int
@@ -97,10 +99,10 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             max_merge_duration=raw["vad"]["max_merge_duration"],
         ),
         translation=TranslationConfig(
-            # API key may be empty — we only require it when --translate is used.
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
             base_url=raw["translation"]["base_url"],
             model=raw["translation"]["model"],
+            disable_thinking=raw["translation"].get("disable_thinking", True),
             source_language=raw["translation"]["source_language"],
             target_language=raw["translation"]["target_language"],
             batch_size=raw["translation"]["batch_size"],
@@ -114,23 +116,43 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
         ocr=_load_ocr_config(raw["ocr"]),
     )
 
+
+
+def with_mode(cfg: Config, mode: str) -> Config:
+    """Return a copy of cfg with transcription/ocr enabled flags set
+    according to mode.
+
+    Modes:
+      - "whisper": transcription on, OCR off
+      - "ocr":     transcription off, OCR on
+      - "merged":  both on
+    """
+    if mode == "whisper":
+        return replace(
+            cfg,
+            transcription=TranscriptionConfig(enabled=True),
+            ocr=replace(cfg.ocr, enabled=False),
+        )
+    if mode == "ocr":
+        return replace(
+            cfg,
+            transcription=TranscriptionConfig(enabled=False),
+            ocr=replace(cfg.ocr, enabled=True),
+        )
+    if mode == "merged":
+        return replace(
+            cfg,
+            transcription=TranscriptionConfig(enabled=True),
+            ocr=replace(cfg.ocr, enabled=True),
+        )
+    raise ValueError(f"Unknown mode: {mode}")
+
 def _load_ocr_config(raw: dict) -> OcrConfig:
-
-    enabled = raw.get("enabled", False)
-
-    # Only require model paths if OCR is actually enabled.
-    if enabled:
-        det_model = Path(os.environ["OCR_DET_MODEL"])
-        rec_model = Path(os.environ["OCR_REC_MODEL"])
-        dict_file = Path(os.environ["OCR_DICT_FILE"])
-    else:
-        det_model = rec_model = dict_file = Path()
-
     return OcrConfig(
-        enabled=enabled,
-        det_model=det_model,
-        rec_model=rec_model,
-        dict_file=dict_file,
+        enabled=raw.get("enabled", False),
+        det_model=Path(os.environ["OCR_DET_MODEL"]),
+        rec_model=Path(os.environ["OCR_REC_MODEL"]),
+        dict_file=Path(os.environ["OCR_DICT_FILE"]),
         providers=tuple(raw.get("providers", ["CPUExecutionProvider"])),
         sample_fps=raw.get("sample_fps", 3),
         rec_confidence=raw.get("rec_confidence", 0.5),
@@ -144,7 +166,7 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             min_box_height_ratio=raw["filter"]["min_box_height_ratio"],
             max_box_height_ratio=raw["filter"]["max_box_height_ratio"],
             min_text_length=raw["filter"]["min_text_length"],
-            min_confidence=raw["filter"]["min_confidence"],        # ← new
+            min_confidence=raw["filter"]["min_confidence"],
             blocklist_texts=tuple(raw["filter"].get("blocklist_texts", [])),
             blocklist_patterns=tuple(raw["filter"].get("blocklist_patterns", [])),
         ),
