@@ -16,3 +16,6 @@ class VadError(PipelineError):
 
 class TranslationError(PipelineError):
     """Raised when translation fails."""
+
+class OcrError(PipelineError):
+    """Raised when OCR fails."""
