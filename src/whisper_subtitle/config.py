@@ -60,6 +60,10 @@ class OcrConfig:
     providers: tuple[str, ...]
     sample_fps: int
     rec_confidence: float
+    crop_top_ratio: float
+    crop_bottom_ratio: float
+    crop_left_ratio: float
+    crop_right_ratio: float
     filter: OcrFilterConfig
 
 @dataclass(frozen=True)
@@ -130,6 +134,10 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
         providers=tuple(raw.get("providers", ["CPUExecutionProvider"])),
         sample_fps=raw.get("sample_fps", 3),
         rec_confidence=raw.get("rec_confidence", 0.5),
+        crop_top_ratio=raw.get("crop_top_ratio", 0.0),
+        crop_bottom_ratio=raw.get("crop_bottom_ratio", 0.0),
+        crop_left_ratio=raw.get("crop_left_ratio", 0.0),
+        crop_right_ratio=raw.get("crop_right_ratio", 0.0),
         filter=OcrFilterConfig(
             min_duration=raw["filter"]["min_duration"],
             max_duration=raw["filter"]["max_duration"],
