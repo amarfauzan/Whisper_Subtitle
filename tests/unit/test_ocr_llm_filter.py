@@ -26,6 +26,8 @@ def cfg(**overrides) -> LlmFilterConfig:
         model="test-model",
         batch_size=100,
         min_events=1,
+        source_language="Korean",
+        content_type="variety show",
     )
     base.update(overrides)
     return LlmFilterConfig(**base)
@@ -43,14 +45,40 @@ def fake_response(content: str) -> MagicMock:
 
 class TestBuildPrompt:
     def test_numbers_entries(self):
-        prompt = _build_prompt([ev("안녕"), ev("ZENA")])
+        prompt = _build_prompt(
+            [ev("안녕"), ev("ZENA")],
+            source_language="Korean",
+            content_type="variety show",
+        )
         assert "[0] 안녕" in prompt
         assert "[1] ZENA" in prompt
 
+    def test_includes_language_and_content_type(self):
+        prompt = _build_prompt(
+            [ev("x")],
+            source_language="Japanese",
+            content_type="anime",
+        )
+        assert "Japanese" in prompt
+        assert "anime" in prompt
+
     def test_includes_drop_instruction(self):
-        prompt = _build_prompt([ev("x")])
+        prompt = _build_prompt(
+            [ev("x")],
+            source_language="Korean",
+            content_type="variety show",
+        )
         assert '"drop"' in prompt
 
+    def test_no_video_specific_examples(self):
+        """Regression guard: prompt must not contain specific names."""
+        prompt = _build_prompt(
+            [ev("x")],
+            source_language="Korean",
+            content_type="variety show",
+        )
+        for name in ["ZENA", "Minami", "Rescene", "Sports Day", "Playin"]:
+            assert name not in prompt
 
 # ---------------------------------------------------------------- parsing
 

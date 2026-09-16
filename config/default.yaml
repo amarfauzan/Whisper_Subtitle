@@ -34,6 +34,13 @@ ocr:
   providers: ["CPUExecutionProvider"]
   sample_fps: 3
   rec_confidence: 0.5
+  llm_filter:
+    enabled: false
+    model: deepseek-chat
+    batch_size: 100
+    min_events: 5
+    source_language: Korean
+    content_type: variety show
   filter:
     min_duration: 0.5
     max_duration: 8.0
@@ -48,8 +55,3 @@ ocr:
       - "^[0-9\\s]+$"
       - "^[A-Za-z0-9\\(\\)\\s'!?.~-]{1,15}$"
       - "^[ㅋㅎㅠㅜ]+$"
-
-  llm_filter:
-    enabled: false         # opt-in
-    batch_size: 100
-    model: deepseek-chat

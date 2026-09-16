@@ -82,6 +82,8 @@ class LlmFilterConfig:
     model: str
     batch_size: int
     min_events: int
+    source_language: str
+    content_type: str
 
 @dataclass(frozen=True)
 class Config:
@@ -181,6 +183,8 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             model=raw.get("llm_filter", {}).get("model", "deepseek-chat"),
             batch_size=raw.get("llm_filter", {}).get("batch_size", 100),
             min_events=raw.get("llm_filter", {}).get("min_events", 5),
+            source_language=raw.get("llm_filter", {}).get("source_language", "Korean"),
+            content_type=raw.get("llm_filter", {}).get("content_type", "variety show"),
         ),
         filter=OcrFilterConfig(
             min_duration=raw["filter"]["min_duration"],

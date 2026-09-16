@@ -38,6 +38,8 @@ ocr:
     model: deepseek-chat
     batch_size: 100
     min_events: 5
+    source_language: Korean
+    content_type: variety show
   filter:
     min_duration: 0.5
     max_duration: 8.0
