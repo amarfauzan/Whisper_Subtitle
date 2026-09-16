@@ -3,8 +3,8 @@ chunk_length_seconds: 600
 whisper:
   mode: server              # or: cli
   language: ko
-  beam_size: 3
-  best_of: 3
+  beam_size: 1
+  best_of: 1
   max_line_length: 30
   server_host: 127.0.0.1
   server_port: 8080
