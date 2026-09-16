@@ -39,6 +39,114 @@ Optional translation to English is available for all modes via DeepSeek.
   for `--translate`. To run without an API key, set `ocr.llm_filter.enabled: false`
   and skip `--translate`.
 
+## GPU Acceleration
+
+The pipeline is hardware-agnostic. The two compute-heavy external tools—**Whisper** and **OCR**—can use different hardware backends depending on your system.
+
+### Whisper (Transcription)
+
+[`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) must be built with the GPU backend appropriate for your hardware.
+
+#### NVIDIA (CUDA)
+
+```bash
+cd whisper.cpp
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release -j
+```
+
+#### AMD or Intel (Linux, Vulkan)
+
+Install the Vulkan development packages first:
+
+```bash
+sudo apt install vulkan-tools libvulkan-dev
+```
+
+Then build whisper.cpp with Vulkan support:
+
+```bash
+cd whisper.cpp
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -j
+```
+
+#### Apple Silicon (Metal)
+
+Metal support is enabled by default on Apple Silicon:
+
+```bash
+cd whisper.cpp
+cmake -B build
+cmake --build build --config Release -j
+```
+
+#### CPU Only
+
+CPU mode works on any supported platform, but is slower:
+
+```bash
+cd whisper.cpp
+cmake -B build
+cmake --build build --config Release -j
+```
+
+The resulting binaries:
+
+```text
+whisper.cpp/build/bin/
+├── whisper-cli
+├── whisper-server
+└── whisper-vad-speech-segments
+```
+
+Point the corresponding variables in `.env` at these binaries.
+
+### OCR (On-Screen Text)
+
+ONNX Runtime provides different execution providers through separate pip packages. These packages are **mutually exclusive**, so install the one that matches your hardware:
+
+| Package                | Provider                    | Hardware          |
+| ---------------------- | --------------------------- | ----------------- |
+| `onnxruntime`          | `CPUExecutionProvider`      | Any               |
+| `onnxruntime-gpu`      | `CUDAExecutionProvider`     | NVIDIA            |
+| `onnxruntime-rocm`     | `ROCMExecutionProvider`     | AMD Linux         |
+| `onnxruntime-directml` | `DirectMLExecutionProvider` | Windows AMD/Intel |
+| `onnxruntime-silicon`  | `CoreMLExecutionProvider`   | Apple Silicon     |
+
+Install the package for your hardware:
+
+```bash
+uv remove onnxruntime
+uv add onnxruntime-gpu
+```
+
+Replace `onnxruntime-gpu` with the appropriate package from the table above.
+
+Then configure the execution providers in `config/default.yaml`:
+
+```yaml
+ocr:
+  providers:
+    - CUDAExecutionProvider
+    - CPUExecutionProvider
+```
+
+Keeping `CPUExecutionProvider` in the list provides a fallback if the GPU provider cannot be initialized.
+
+For example, if the GPU driver or required libraries are missing, ONNX Runtime can fall back to CPU execution.
+
+Check the log output for:
+
+```text
+Detection providers: [...]
+```
+
+to confirm which providers were actually loaded.
+
+> **Note:** The default configuration in this repository is tuned for CPU-only OCR. Enabling a GPU provider can make OCR approximately **5–20× faster**, depending on the hardware and workload. With faster OCR, you may want to increase `sample_fps` to achieve finer time resolution.
+
+
 ## Install
 
 ```bash
