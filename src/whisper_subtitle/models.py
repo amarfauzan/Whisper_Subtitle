@@ -37,6 +37,7 @@ class Subtitle:
     start: float
     end: float
     text: str
+    source_hint: str | None = None    # ← new
 
     @property
     def duration(self) -> float:

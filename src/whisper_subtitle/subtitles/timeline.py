@@ -41,6 +41,9 @@ def shift_timeline(
             start=sub.start + offset_seconds,
             end=sub.end + offset_seconds,
             text=sub.text,
+            source_hint=sub.source_hint,     # ← must be present
         )
         for sub in subtitles
     ]
+
+
