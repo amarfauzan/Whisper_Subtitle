@@ -550,11 +550,3 @@ uv run pytest -v
 ```
 
 ## License
-
-Choose and add your project license here.
-
-For example:
-
-```text
-MIT License
-```
