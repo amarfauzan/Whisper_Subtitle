@@ -550,3 +550,4 @@ uv run pytest -v
 ```
 
 ## License
+MIT
