@@ -35,7 +35,9 @@ Optional translation to English is available for all modes via DeepSeek.
   - `ch_PP-OCRv5_det_mobile.onnx` (text detection)
   - `korean_PP-OCRv5_rec_mobile.onnx` (Korean recognition)
   - `ppocrv5_korean_dict.txt` (character dictionary)
-- **DeepSeek API key** (only if using `--translate` or the LLM OCR filter)
+- **DeepSeek API key** — required by default for the LLM OCR filter and
+  for `--translate`. To run without an API key, set `ocr.llm_filter.enabled: false`
+  and skip `--translate`.
 
 ## Install
 
@@ -255,16 +257,38 @@ The default configuration is tuned for Korean variety shows at 480p–720p.
 
 If you're processing different types of content, the following settings are the most likely to need adjustment.
 
-### `config/default.yaml` → `ocr.filter`
+### `config/default.yaml` → `ocr.filter` and `ocr.llm_filter`
 
-| Setting                |  Default | What it does                                                          |
-| ---------------------- | -------: | --------------------------------------------------------------------- |
-| `min_confidence`       |   `0.75` | Drops OCR events below this confidence                                |
-| `min_duration`         |    `1.0` | Drops OCR events shorter than this duration                           |
-| `max_duration`         |    `8.0` | Drops OCR events longer than this duration; useful for catching logos |
-| `max_text_repeats`     |      `8` | Drops text appearing more than N times; useful for catching name tags |
-| `max_box_height_ratio` |   `0.15` | Drops boxes taller than this fraction of the frame                    |
-| `blocklist_patterns`   | See YAML | Regex patterns used to drop short ASCII/gibberish text                |
+**Deterministic filters** (no API call, always fast):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `min_confidence` | 0.75 | Drop OCR events below this confidence |
+| `min_duration` | 1.0 | Drop OCR events shorter than this |
+| `max_duration` | 8.0 | Drop OCR events longer than this (catches logos) |
+| `max_text_repeats` | 8 | Drop text appearing more than N times (catches nametags) |
+| `max_box_height_ratio` | 0.15 | Drop boxes taller than this fraction of the frame |
+| `blocklist_patterns` | see yaml | Regex patterns to drop short ASCII/gibberish text |
+
+**LLM-based filter** — runs after the deterministic filters, **on by default**:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | Turn the LLM filter on/off |
+| `model` | `deepseek-chat` | Model to use (any DeepSeek chat model) |
+| `batch_size` | 100 | Events per API call |
+| `source_language` | `Korean` | Language of the content |
+| `content_type` | `variety show` | Content type hint for the prompt |
+
+The LLM filter asks DeepSeek to classify each event as "subtitle" or
+"on-screen clutter". It catches name fragments, watermark variants, and
+OCR garbage that patterns can't — for example `리센`, `ZEC` (misread of
+`ZENA`), `재나` (misread of `제나`). Cost: ~3 seconds and under a cent
+per video.
+
+Requires `DEEPSEEK_API_KEY` in `.env`. If the API fails for any reason
+(network, rate limit, malformed response), the filter is skipped and all
+events pass through unchanged.
 
 ### `config/default.yaml` → `merge`
 
@@ -335,11 +359,29 @@ The pipeline normally terminates its own server when it finishes. However, press
 
 ### OCR results contain too much noise
 
-There are three main knobs to adjust, roughly in order of impact:
 
-1. **`max_text_repeats`** — lower it to `5` if name tags or repeated text survive.
-2. **`min_confidence`** — raise it to `0.8` if low-quality OCR results survive.
-3. **`llm_filter.enabled`** — enable LLM-based filtering if you still have residual clutter. This requires a DeepSeek API key.
+Four knobs, in order of impact:
+
+1. `max_text_repeats` — lower to 5 if nametags survive. Nametags and
+   watermarks repeat many times; real subtitles don't.
+2. `min_confidence` — raise to 0.8 or 0.85 if garbage survives. Real
+   subtitles typically score above 0.9; OCR errors on graphics cluster
+   around 0.6–0.8.
+3. `llm_filter.enabled` — should already be `true` by default. Check
+   that your config hasn't turned it off, and that `DEEPSEEK_API_KEY`
+   is set in `.env`. If you're intentionally running without an API key,
+   the filter will silently skip and you'll see more noise.
+4. `blocklist_patterns` — for very specific recurring garbage (like a
+   particular logo variant), add a regex pattern.
+
+**OCR is dropping too much (real subtitles missing)**
+
+1. Lower `min_confidence` to 0.7
+2. Lower `min_duration` to 0.5
+3. Raise `max_box_height_ratio` to 0.20 (title cards can be tall)
+4. If using the LLM filter, add `content_type: "variety show"` (default)
+   — this tells the prompt that effect text and short reactions are
+   usually clutter, but doesn't help if you're processing a drama
 
 ### Translation is slow
 
