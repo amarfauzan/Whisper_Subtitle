@@ -63,7 +63,7 @@ def parse_whisper_json(json_path: Path) -> list[WhisperSegment]:
     return segments
 
 
-def run_whisper(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
+def run_whisper_cli(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
     """Run whisper-cli on an audio file and return the parsed result.
 
     Produces one file next to the audio: <stem>.json.

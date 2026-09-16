@@ -19,9 +19,11 @@ from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
 from whisper_subtitle.subtitles.srt import render_srt
 from whisper_subtitle.subtitles.timeline import shift_ocr_events, shift_timeline
 from whisper_subtitle.transcription.vad import run_vad
-from whisper_subtitle.transcription.whisper_runner import run_whisper
-from whisper_subtitle.translation.translator import translate_subtitles
 from concurrent.futures import ThreadPoolExecutor
+from whisper_subtitle.transcription.whisper_backend import (
+    WhisperBackend,
+    make_whisper_backend,
+)
 
 log = logging.getLogger(__name__)
 
@@ -85,11 +87,16 @@ def _run_whisper_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
 ) -> list[Subtitle]:
-    """Process every chunk through the whisper pipeline."""
-    all_subs: list[Subtitle] = []
-    for i, chunk in enumerate(chunks, start=1):
-        log.info("Whisper chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        all_subs.extend(_process_chunk_whisper(chunk, cfg))
+    """Process every chunk through the whisper pipeline.
+
+    The backend context manager spawns whisper-server (if configured)
+    before the first chunk and kills it after the last one.
+    """
+    with make_whisper_backend(cfg.whisper) as backend:
+        all_subs: list[Subtitle] = []
+        for i, chunk in enumerate(chunks, start=1):
+            log.info("Whisper chunk %d/%d: %s", i, len(chunks), chunk.path.name)
+            all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
     return all_subs
 
 
@@ -110,14 +117,6 @@ def _run_ocr_over_chunks(
         log.info("OCR chunk %d/%d: %s", i, len(chunks), chunk.path.name)
         all_events.extend(_ocr_chunk_events(chunk, cfg, engine))
     return all_events
-
-
-def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
-    all_subs: list[Subtitle] = []
-    for i, chunk in enumerate(chunks, start=1):
-        log.info("Chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        all_subs.extend(_process_chunk_whisper(chunk, cfg))
-    return all_subs
 
 
 def _process_all_ocr(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
@@ -163,10 +162,25 @@ def _build_ocr_engine(cfg: Config) -> PaddleOcrEngine:
     )
 
 
-def _process_chunk_whisper(chunk: Chunk, cfg: Config) -> list[Subtitle]:
+
+
+
+def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
+    with make_whisper_backend(cfg.whisper) as backend:
+        all_subs: list[Subtitle] = []
+        for i, chunk in enumerate(chunks, start=1):
+            log.info("Whisper chunk %d/%d: %s", i, len(chunks), chunk.path.name)
+            all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
+    return all_subs
+
+def _process_chunk_whisper(
+    chunk: Chunk,
+    cfg: Config,
+    backend: WhisperBackend,
+) -> list[Subtitle]:
     audio = extract_audio(chunk.path)
     vad_segments = run_vad(audio, cfg.vad)
-    whisper_result = run_whisper(audio, cfg.whisper)
+    whisper_result = backend.transcribe(audio)
 
     subtitles = merge_vad_and_whisper(
         vad_segments,
@@ -176,7 +190,6 @@ def _process_chunk_whisper(chunk: Chunk, cfg: Config) -> list[Subtitle]:
     if chunk.offset:
         subtitles = shift_timeline(subtitles, chunk.offset)
     return subtitles
-
 
 def _ocr_chunk_events(
     chunk: Chunk,

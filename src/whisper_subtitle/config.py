@@ -9,13 +9,20 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class WhisperConfig:
-    cli: Path
+    mode: str                # "cli" or "server"
+    cli: Path                # used in cli mode
+    server_exe: Path         # used in server mode
     model: Path
     vad_model: Path
     language: str
     beam_size: int
     best_of: int
     max_line_length: int
+    server_host: str
+    server_port: int
+    server_threads: int
+    server_startup_timeout: float
+    server_request_timeout: float
 
 @dataclass(frozen=True)
 class VadConfig:
@@ -114,13 +121,20 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
     return Config(
         chunk_length_seconds=raw["chunk_length_seconds"],
         whisper=WhisperConfig(
+            mode=raw["whisper"].get("mode", "cli"),
             cli=Path(os.environ["WHISPER_CLI"]),
+            server_exe=Path(os.environ["WHISPER_SERVER"]),
             model=Path(os.environ["WHISPER_MODEL"]),
             vad_model=Path(os.environ["VAD_MODEL"]),
             language=raw["whisper"]["language"],
             beam_size=raw["whisper"]["beam_size"],
             best_of=raw["whisper"]["best_of"],
             max_line_length=raw["whisper"]["max_line_length"],
+            server_host=raw["whisper"].get("server_host", "127.0.0.1"),
+            server_port=raw["whisper"].get("server_port", 8080),
+            server_threads=raw["whisper"].get("server_threads", 8),
+            server_startup_timeout=raw["whisper"].get("server_startup_timeout", 60.0),
+            server_request_timeout=raw["whisper"].get("server_request_timeout", 300.0),
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),
