@@ -22,7 +22,6 @@ def ocr(start: float, end: float, text: str) -> OcrEvent:
         text=text, frame_count=5, confidence=0.95,
     )
 
-
 def cfg(**overrides) -> MergeConfig:
     base = dict(
         overlap_threshold=0.3,
@@ -31,6 +30,7 @@ def cfg(**overrides) -> MergeConfig:
         fill_gaps=True,
         gap_fill_min_duration=0.5,
         gap_fill_prefix="",
+        parallel=True,          # ← add this line
     )
     base.update(overrides)
     return MergeConfig(**base)
