@@ -50,6 +50,7 @@ def filter_events(
             kept.append(ev)
         else:
             dropped[reason] = dropped.get(reason, 0) + 1
+            log.debug("Filter dropped [%s]: %r", reason, ev.text)
 
     if dropped:
         summary = ", ".join(f"{k}={v}" for k, v in sorted(dropped.items()))
@@ -134,16 +135,17 @@ def filter_repeated_texts(
         key = _normalize_for_repeat(ev.text)
         counts[key] = counts.get(key, 0) + 1
 
-    kept = [
-        ev for ev in events
-        if counts[_normalize_for_repeat(ev.text)] <= max_repeats
-    ]
+    kept: list[OcrEvent] = []
+    for ev in events:
+        key = _normalize_for_repeat(ev.text)
+        if counts[key] > max_repeats:
+            log.debug("Repeat filter dropped: %r", ev.text)
+        else:
+            kept.append(ev)
 
     dropped = len(events) - len(kept)
     if dropped:
-        repeated_groups = sum(
-            1 for c in counts.values() if c > max_repeats
-        )
+        repeated_groups = sum(1 for c in counts.values() if c > max_repeats)
         log.info(
             "Repeat filter: dropped %d/%d events (%d text groups)",
             dropped, len(events), repeated_groups,

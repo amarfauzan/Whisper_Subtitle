@@ -32,8 +32,12 @@ Each entry below is text that appeared on screen. Your job: identify entries
 that are NOT real subtitle dialogue so they can be removed.
 
 DROP an entry if it is:
-- A person's name alone (a short name with no other words)
-- A show, game, or brand name (a recurring title or watermark phrase)
+- A person's name or nickname alone, even with punctuation or an emoji.
+  On-screen nametags identify who is speaking — they are not dialogue.
+  treat any single name-like token as a drop, never as an interjection.
+- A show or brand name displayed as a persistent watermark or logo.
+  Distinguish from title cards: a watermark is always on screen; a
+  title card appears briefly to introduce a new segment.
 - A score, number, or numeric symbol display
 - Short English text or gibberish (all-latin strings that don't read as
   real words)
@@ -46,6 +50,9 @@ KEEP an entry if it is:
 - Bracketed on-screen descriptions of action or context
 - Any sentence with a verb or meaningful phrase that a viewer
   would want to understand
+- Title cards or full-screen text introducing a new game, location, or
+  segment. These are usually shown just before the corresponding content
+  starts, with no accompanying dialogue.
 
 When unsure, KEEP. A false drop is worse than a false keep.
 

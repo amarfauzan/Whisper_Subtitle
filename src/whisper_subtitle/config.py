@@ -86,6 +86,16 @@ class LlmFilterConfig:
     content_type: str
 
 @dataclass(frozen=True)
+class MergeConfig:
+    overlap_threshold: float
+    agree_threshold: float
+    hint_threshold: float
+    fill_gaps: bool
+    gap_fill_min_duration: float
+    gap_fill_prefix: str
+    parallel: bool         
+
+@dataclass(frozen=True)
 class Config:
     chunk_length_seconds: int
     whisper: WhisperConfig
@@ -93,6 +103,7 @@ class Config:
     translation: TranslationConfig
     transcription: TranscriptionConfig
     ocr: OcrConfig
+    merge: MergeConfig
 
 
 
@@ -132,6 +143,15 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             enabled=raw.get("transcription", {}).get("enabled", True),
         ),
         ocr=_load_ocr_config(raw["ocr"]),
+        merge=MergeConfig(
+            overlap_threshold=raw["merge"]["overlap_threshold"],
+            agree_threshold=raw["merge"]["agree_threshold"],
+            hint_threshold=raw["merge"]["hint_threshold"],
+            fill_gaps=raw["merge"]["fill_gaps"],
+            gap_fill_min_duration=raw["merge"]["gap_fill_min_duration"],
+            gap_fill_prefix=raw["merge"].get("gap_fill_prefix", ""),
+            parallel=raw["merge"].get("parallel", True),    # ← new
+        ),
     )
 
 

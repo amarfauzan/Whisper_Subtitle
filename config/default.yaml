@@ -35,7 +35,7 @@ ocr:
   sample_fps: 3
   rec_confidence: 0.5
   llm_filter:
-    enabled: false
+    enabled: true
     model: deepseek-chat
     batch_size: 100
     min_events: 5
@@ -55,3 +55,12 @@ ocr:
       - "^[0-9\\s]+$"
       - "^[A-Za-z0-9\\(\\)\\s'!?.~-]{1,15}$"
       - "^[ㅋㅎㅠㅜ]+$"
+
+merge:
+  overlap_threshold: 0.3
+  agree_threshold: 0.9
+  hint_threshold: 0.5
+  fill_gaps: true
+  gap_fill_min_duration: 0.5
+  gap_fill_prefix: ""
+  parallel: true
