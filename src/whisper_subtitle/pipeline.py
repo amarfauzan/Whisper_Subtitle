@@ -13,6 +13,7 @@ from whisper_subtitle.ocr.filter import (
     filter_events,
     filter_repeated_texts,
 )
+from whisper_subtitle.transcription.vad_transcribe import transcribe_by_vad_segments
 from whisper_subtitle.ocr.grouper import group_detections
 from whisper_subtitle.ocr.runner import sample_and_detect
 from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
@@ -180,11 +181,17 @@ def _process_chunk_whisper(
 ) -> list[Subtitle]:
     audio = extract_audio(chunk.path)
     vad_segments = run_vad(audio, cfg.vad)
-    whisper_result = backend.transcribe(audio)
+
+    if cfg.whisper.strategy == "vad_segments":
+        whisper_segments = transcribe_by_vad_segments(
+            audio, vad_segments, backend, cfg.whisper
+        )
+    else:
+        whisper_segments = backend.transcribe(audio).segments
 
     subtitles = merge_vad_and_whisper(
         vad_segments,
-        whisper_result.segments,
+        whisper_segments,
         max_merge_duration=cfg.vad.max_merge_duration,
     )
     if chunk.offset:
