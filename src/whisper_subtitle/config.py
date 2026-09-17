@@ -37,6 +37,7 @@ class VadConfig:
     exe: Path
     model: Path
     max_merge_duration: float
+    max_speech_duration: float
 
 @dataclass(frozen=True)
 class TranslationConfig:
@@ -154,6 +155,7 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             exe=Path(os.environ["VAD_EXE"]),
             model=Path(os.environ["VAD_MODEL"]),
             max_merge_duration=raw["vad"]["max_merge_duration"],
+            max_speech_duration=raw["vad"].get("max_speech_duration", 6.0),  # ← new
         ),
         translation=TranslationConfig(
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),

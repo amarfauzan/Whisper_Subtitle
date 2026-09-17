@@ -2,7 +2,7 @@ chunk_length_seconds: 600
 
 whisper:
   mode: server
-  strategy: whole            # ← new: whole | vad_segments
+  strategy: vad_segments            # ← new: whole | vad_segments
   language: ko
   beam_size: 3
   best_of: 3
@@ -21,6 +21,7 @@ vad:
   min_subtitle_duration: 0.5
   max_subtitle_duration: 7.0
   max_merge_duration: 2.0
+  max_speech_duration: 6.0 
 
 translation:
   base_url: https://api.deepseek.com/v1

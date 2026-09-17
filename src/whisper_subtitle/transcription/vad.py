@@ -66,6 +66,7 @@ def run_vad(audio_path: Path, cfg: VadConfig) -> list[VadSegment]:
         str(cfg.exe),
         "-f", str(audio_path),
         "-vm", str(cfg.model),
+        "-vmsd", str(cfg.max_speech_duration),
     ]
 
     log.debug("Running VAD: %s", " ".join(command))
