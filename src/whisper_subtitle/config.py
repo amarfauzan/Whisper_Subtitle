@@ -8,10 +8,16 @@ from dotenv import load_dotenv
 
 
 @dataclass(frozen=True)
+class VadSegmentsConfig:
+    padding: float
+    merge_gap: float
+    min_segment_duration: float
+
+@dataclass(frozen=True)
 class WhisperConfig:
-    mode: str                # "cli" or "server"
-    cli: Path                # used in cli mode
-    server_exe: Path         # used in server mode
+    mode: str
+    cli: Path
+    server_exe: Path
     model: Path
     vad_model: Path
     language: str
@@ -23,6 +29,8 @@ class WhisperConfig:
     server_threads: int
     server_startup_timeout: float
     server_request_timeout: float
+    strategy: str                     # ← new: "whole" or "vad_segments"
+    vad_segments: VadSegmentsConfig   # ← new
 
 @dataclass(frozen=True)
 class VadConfig:
@@ -135,6 +143,12 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             server_threads=raw["whisper"].get("server_threads", 8),
             server_startup_timeout=raw["whisper"].get("server_startup_timeout", 60.0),
             server_request_timeout=raw["whisper"].get("server_request_timeout", 300.0),
+            strategy=raw["whisper"].get("strategy", "whole"),
+            vad_segments=VadSegmentsConfig(
+                padding=raw["whisper"].get("vad_segments", {}).get("padding", 0.15),
+                merge_gap=raw["whisper"].get("vad_segments", {}).get("merge_gap", 0.5),
+                min_segment_duration=raw["whisper"].get("vad_segments", {}).get("min_segment_duration", 0.3),
+            ),
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),
