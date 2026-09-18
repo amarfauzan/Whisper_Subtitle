@@ -1,5 +1,6 @@
 """Tests for VAD-segment transcription."""
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -14,6 +15,31 @@ from whisper_subtitle.transcription.vad_transcribe import (
     transcribe_by_vad_segments,
 )
 
+from whisper_subtitle.transcription.vad_transcribe import (
+    _build_batch_clip,
+    _coverage_ok,
+    _group_into_batches,
+    _map_batch_time,
+    _map_whisper_segment,
+    _MappingEntry,
+    transcribe_batched_vad_segments,
+    transcribe_vad_segments,
+)
+
+import wave
+
+
+FRAMERATE = 16000
+
+
+def make_wav(path: Path, seconds: float) -> None:
+    """Create a silent 16-bit mono WAV of the given duration."""
+    frames = int(seconds * FRAMERATE)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(FRAMERATE)
+        f.writeframes(b"\x00\x00" * frames)
 
 def make_cfg(**overrides) -> WhisperConfig:
     base = dict(
@@ -36,10 +62,158 @@ def make_cfg(**overrides) -> WhisperConfig:
             padding=0.15,
             merge_gap=0.5,
             min_segment_duration=0.3,
+            max_batch_duration=0.0,     # ← new
+            silence_ms=200,             # ← new
+            min_coverage=0.9,           # ← new
         ),
     )
     base.update(overrides)
     return WhisperConfig(**base)
+
+
+class TestGroupIntoBatches:
+    def test_empty(self):
+        assert _group_into_batches([], 30.0, 0.2) == []
+
+    def test_single_batch(self):
+        segs = [vs(0, 0, 3.0), vs(1, 3.5, 6.0)]
+        batches = _group_into_batches(segs, 30.0, 0.2)
+        assert len(batches) == 1
+        assert len(batches[0]) == 2
+
+    def test_splits_when_over_max(self):
+        segs = [vs(i, i * 10, i * 10 + 8.0) for i in range(4)]
+        batches = _group_into_batches(segs, 20.0, 0.2)
+        # Each seg is 8s. 8+0.2+8+0.2+8 = 24.6 > 20, so 2 per batch
+        assert len(batches) == 2
+        assert all(len(b) <= 2 for b in batches)
+
+    def test_single_oversized_segment_gets_own_batch(self):
+        segs = [vs(0, 0, 50.0), vs(1, 60.0, 62.0)]
+        batches = _group_into_batches(segs, 30.0, 0.2)
+        assert len(batches) == 2
+        assert len(batches[0]) == 1  # oversized alone
+        assert len(batches[1]) == 1
+
+
+class TestBuildBatchClip:
+    def test_single_segment(self, tmp_path):
+        audio = tmp_path / "src.wav"
+        make_wav(audio, 10.0)
+        out = tmp_path / "batch.wav"
+        mapping, duration = _build_batch_clip(
+            audio, [vs(0, 2.0, 5.0)], out, silence_ms=200,
+        )
+        assert abs(duration - 3.0) < 0.01
+        assert len(mapping) == 1
+        assert mapping[0].is_speech
+        assert mapping[0].original_start == 2.0
+        assert mapping[0].original_end == 5.0
+
+    def test_two_segments_with_silence(self, tmp_path):
+        audio = tmp_path / "src.wav"
+        make_wav(audio, 10.0)
+        out = tmp_path / "batch.wav"
+        segs = [vs(0, 1.0, 3.0), vs(1, 5.0, 7.0)]
+        mapping, duration = _build_batch_clip(audio, segs, out, silence_ms=200)
+        # 2s + 0.2s + 2s = 4.2s
+        assert abs(duration - 4.2) < 0.05
+        assert len(mapping) == 3
+        assert mapping[0].is_speech
+        assert not mapping[1].is_speech
+        assert mapping[2].is_speech
+
+
+class TestMapping:
+    def test_inside_speech(self):
+        mapping = [_MappingEntry(0.0, 2.0, 10.0, 12.0, True)]
+        assert _map_batch_time(0.0, mapping) == 10.0
+        assert _map_batch_time(1.0, mapping) == 11.0
+        assert _map_batch_time(2.0, mapping) == 12.0
+
+    def test_inside_silence(self):
+        mapping = [
+            _MappingEntry(0.0, 2.0, 10.0, 12.0, True),
+            _MappingEntry(2.0, 2.2, 12.0, 12.0, False),  # silence gap
+            _MappingEntry(2.2, 4.0, 15.0, 17.0, True),
+        ]
+        # Position inside the silence gap
+        assert _map_batch_time(2.1, mapping) == 12.0  # clamps to boundary
+
+    def test_out_of_range_clamps(self):
+        mapping = [_MappingEntry(0.0, 2.0, 10.0, 12.0, True)]
+        assert _map_batch_time(-1.0, mapping) == 10.0
+        assert _map_batch_time(5.0, mapping) == 12.0
+
+    def test_map_whisper_segment(self):
+        mapping = [_MappingEntry(0.0, 3.0, 100.0, 103.0, True)]
+        wseg = WhisperSegment(start=0.5, end=2.5, text="hi")
+        mapped = _map_whisper_segment(wseg, mapping)
+        assert mapped.start == 100.5
+        assert mapped.end == 102.5
+        assert mapped.text == "hi"
+
+
+class TestCoverage:
+    def test_full_coverage(self):
+        segs = [WhisperSegment(start=0.0, end=10.0, text="x")]
+        assert _coverage_ok(segs, 10.0, 0.9)
+
+    def test_under_coverage(self):
+        segs = [WhisperSegment(start=0.0, end=5.0, text="x")]
+        assert not _coverage_ok(segs, 10.0, 0.9)
+
+    def test_empty(self):
+        assert not _coverage_ok([], 10.0, 0.9)
+
+
+class TestBatchedTranscription:
+    def test_dispatches_to_batched_when_enabled(self, tmp_path, monkeypatch):
+        audio = tmp_path / "src.wav"
+        make_wav(audio, 10.0)
+        backend = MagicMock()
+        backend.transcribe.return_value.segments = [ws(0.0, 3.0, "x")]
+        cfg = make_cfg()
+        cfg = replace(cfg, vad_segments=replace(
+            cfg.vad_segments, max_batch_duration=30.0,
+        ))
+        segs = [vs(0, 1.0, 4.0)]
+        transcribe_vad_segments(audio, segs, backend, cfg)
+        assert backend.transcribe.call_count == 1
+
+    def test_dispatches_to_per_segment_when_disabled(self, tmp_path, monkeypatch):
+        audio = tmp_path / "src.wav"
+        make_wav(audio, 10.0)
+        backend = MagicMock()
+        backend.transcribe.return_value.segments = [ws(0.0, 3.0, "x")]
+        cfg = make_cfg()  # max_batch_duration defaults to 0
+        segs = [vs(0, 1.0, 4.0)]
+        transcribe_vad_segments(audio, segs, backend, cfg)
+        assert backend.transcribe.call_count == 1
+
+    def test_fallback_on_under_coverage(self, tmp_path, monkeypatch):
+        audio = tmp_path / "src.wav"
+        make_wav(audio, 20.0)
+        backend = MagicMock()
+        # First call (batch) returns too-short output
+        # Subsequent calls (fallback per-segment) return normal output
+        backend.transcribe.side_effect = [
+            MagicMock(segments=[ws(0.0, 1.0, "short")]),  # under-covered
+            MagicMock(segments=[ws(0.0, 3.0, "ok1")]),
+            MagicMock(segments=[ws(0.0, 3.0, "ok2")]),
+        ]
+        cfg = make_cfg()
+        cfg = replace(cfg, vad_segments=replace(
+            cfg.vad_segments, max_batch_duration=30.0, min_coverage=0.9,
+        ))
+        segs = [vs(0, 1.0, 5.0), vs(1, 6.0, 10.0)]
+
+        result = transcribe_batched_vad_segments(audio, segs, backend, cfg)
+        # Batch failed → fell back to 2 per-segment calls
+        assert backend.transcribe.call_count == 3
+        assert any("ok1" in s.text for s in result)
+
+
 
 
 def vs(idx, start, end):

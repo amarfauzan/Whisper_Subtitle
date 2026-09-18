@@ -25,6 +25,7 @@ from whisper_subtitle.transcription.whisper_backend import (
     WhisperBackend,
     make_whisper_backend,
 )
+from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
 
 log = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ def _process_chunk_whisper(
     vad_segments = run_vad(audio, cfg.vad)
 
     if cfg.whisper.strategy == "vad_segments":
-        whisper_segments = transcribe_by_vad_segments(
+        whisper_segments = transcribe_vad_segments(
             audio, vad_segments, backend, cfg.whisper
         )
     else:

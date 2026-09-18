@@ -14,7 +14,7 @@ whisper:
   server_request_timeout: 300.0
   vad_segments:              # ← new
     padding: 0.15
-    merge_gap: 0.5
+    merge_gap: 0.05
     min_segment_duration: 0.3
 
 vad:

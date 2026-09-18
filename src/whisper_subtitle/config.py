@@ -12,6 +12,9 @@ class VadSegmentsConfig:
     padding: float
     merge_gap: float
     min_segment_duration: float
+    max_batch_duration: float    # 0 disables batching
+    silence_ms: int
+    min_coverage: float
 
 @dataclass(frozen=True)
 class WhisperConfig:
@@ -147,8 +150,11 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             strategy=raw["whisper"].get("strategy", "whole"),
             vad_segments=VadSegmentsConfig(
                 padding=raw["whisper"].get("vad_segments", {}).get("padding", 0.15),
-                merge_gap=raw["whisper"].get("vad_segments", {}).get("merge_gap", 0.5),
+                merge_gap=raw["whisper"].get("vad_segments", {}).get("merge_gap", 0.0),
                 min_segment_duration=raw["whisper"].get("vad_segments", {}).get("min_segment_duration", 0.3),
+                max_batch_duration=raw["whisper"].get("vad_segments", {}).get("max_batch_duration", 0.0),
+                silence_ms=raw["whisper"].get("vad_segments", {}).get("silence_ms", 200),
+                min_coverage=raw["whisper"].get("vad_segments", {}).get("min_coverage", 0.9),
             ),
         ),
         vad=VadConfig(
