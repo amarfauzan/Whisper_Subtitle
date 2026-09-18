@@ -41,34 +41,10 @@ def make_wav(path: Path, seconds: float) -> None:
         f.setframerate(FRAMERATE)
         f.writeframes(b"\x00\x00" * frames)
 
+from tests.conftest import default_whisper_config
+
 def make_cfg(**overrides) -> WhisperConfig:
-    base = dict(
-        mode="cli",
-        cli=Path("/fake/cli"),
-        server_exe=Path("/fake/server"),
-        model=Path("/fake/model.bin"),
-        vad_model=Path("/fake/vad.bin"),
-        language="ko",
-        beam_size=3,
-        best_of=3,
-        max_line_length=30,
-        server_host="127.0.0.1",
-        server_port=8080,
-        server_threads=8,
-        server_startup_timeout=60.0,
-        server_request_timeout=300.0,
-        strategy="vad_segments",
-        vad_segments=VadSegmentsConfig(
-            padding=0.15,
-            merge_gap=0.5,
-            min_segment_duration=0.3,
-            max_batch_duration=0.0,     # ← new
-            silence_ms=200,             # ← new
-            min_coverage=0.9,           # ← new
-        ),
-    )
-    base.update(overrides)
-    return WhisperConfig(**base)
+    return default_whisper_config(**overrides)
 
 
 class TestGroupIntoBatches:

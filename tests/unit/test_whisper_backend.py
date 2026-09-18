@@ -2,7 +2,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from whisper_subtitle.config import WhisperConfig,VadSegmentsConfig
+from whisper_subtitle.config import (
+    EnsembleConfig,
+    VadSegmentsConfig,
+    WhisperConfig,
+)
 from whisper_subtitle.exceptions import WhisperError
 from whisper_subtitle.transcription.whisper_backend import (
     CliBackend,
@@ -10,36 +14,16 @@ from whisper_subtitle.transcription.whisper_backend import (
     _parse_server_segments,
     make_whisper_backend,
 )
+
 from pathlib import Path
 
 
 
 
+from tests.conftest import default_whisper_config
+
 def make_cfg(**overrides) -> WhisperConfig:
-    base = dict(
-        mode="cli",
-        cli=Path("/fake/whisper-cli"),
-        server_exe=Path("/fake/whisper-server"),
-        model=Path("/fake/model.bin"),
-        vad_model=Path("/fake/vad.bin"),
-        language="ko",
-        beam_size=3,
-        best_of=3,
-        max_line_length=30,
-        server_host="127.0.0.1",
-        server_port=8080,
-        server_threads=8,
-        server_startup_timeout=60.0,
-        server_request_timeout=300.0,
-        strategy="whole",
-        vad_segments=VadSegmentsConfig(
-            padding=0.15,
-            merge_gap=0.5,
-            min_segment_duration=0.3,
-        ),
-    )
-    base.update(overrides)
-    return WhisperConfig(**base)
+    return default_whisper_config(**overrides)
 
 
 class TestFactory:
