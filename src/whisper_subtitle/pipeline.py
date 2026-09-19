@@ -89,11 +89,12 @@ def _run_whisper_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
 ) -> list[Subtitle]:
-    """Process every chunk through the whisper pipeline.
+    if cfg.whisper.ensemble.enabled:
+        from whisper_subtitle.transcription.ensemble_pipeline import (
+            process_chunks_with_ensemble,
+        )
+        return process_chunks_with_ensemble(chunks, cfg)
 
-    The backend context manager spawns whisper-server (if configured)
-    before the first chunk and kills it after the last one.
-    """
     with make_whisper_backend(cfg.whisper) as backend:
         all_subs: list[Subtitle] = []
         for i, chunk in enumerate(chunks, start=1):
@@ -168,6 +169,12 @@ def _build_ocr_engine(cfg: Config) -> PaddleOcrEngine:
 
 
 def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
+    if cfg.whisper.ensemble.enabled:
+        from whisper_subtitle.transcription.ensemble_pipeline import (
+            process_chunks_with_ensemble,
+        )
+        return process_chunks_with_ensemble(chunks, cfg)
+
     with make_whisper_backend(cfg.whisper) as backend:
         all_subs: list[Subtitle] = []
         for i, chunk in enumerate(chunks, start=1):

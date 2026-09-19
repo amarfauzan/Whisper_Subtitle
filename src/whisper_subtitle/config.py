@@ -6,6 +6,8 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+from whisper_subtitle.exceptions import PipelineError
+
 
 @dataclass(frozen=True)
 class VadSegmentsConfig:
@@ -15,6 +17,20 @@ class VadSegmentsConfig:
     max_batch_duration: float    # 0 disables batching
     silence_ms: int
     min_coverage: float
+
+@dataclass(frozen=True)
+class EnsembleConfig:
+    enabled: bool
+    secondary_model: Path
+    secondary_port: int
+    overlap_threshold: float
+    agree_threshold: float
+    hint_threshold: float
+    min_cue_duration: float
+    min_cue_chars: int
+    llm_adjudicate: bool
+    llm_batch_size: int
+
 
 @dataclass(frozen=True)
 class WhisperConfig:
@@ -34,6 +50,7 @@ class WhisperConfig:
     server_request_timeout: float
     strategy: str                     # ← new: "whole" or "vad_segments"
     vad_segments: VadSegmentsConfig   # ← new
+    ensemble: EnsembleConfig  
 
 @dataclass(frozen=True)
 class VadConfig:
@@ -114,6 +131,7 @@ class MergeConfig:
     gap_fill_prefix: str
     parallel: bool         
 
+
 @dataclass(frozen=True)
 class Config:
     chunk_length_seconds: int
@@ -156,6 +174,7 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
                 silence_ms=raw["whisper"].get("vad_segments", {}).get("silence_ms", 200),
                 min_coverage=raw["whisper"].get("vad_segments", {}).get("min_coverage", 0.9),
             ),
+            ensemble=_load_ensemble_config(raw["whisper"]),
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),
@@ -256,3 +275,30 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
     )
 
 
+def _load_ensemble_config(whisper_raw: dict) -> EnsembleConfig:
+    raw = whisper_raw.get("ensemble", {})
+    enabled = raw.get("enabled", False)
+
+    if enabled:
+        if "WHISPER_MODEL_SECONDARY" not in os.environ:
+            raise PipelineError(
+                "whisper.ensemble.enabled is true but "
+                "WHISPER_MODEL_SECONDARY is not set in .env"
+            )
+        secondary_model = Path(os.environ["WHISPER_MODEL_SECONDARY"])
+    else:
+        # Dummy value; never used when disabled
+        secondary_model = Path()
+
+    return EnsembleConfig(
+        enabled=enabled,
+        secondary_model=secondary_model,
+        secondary_port=raw.get("secondary_port", 8081),
+        overlap_threshold=raw.get("overlap_threshold", 0.4),
+        agree_threshold=raw.get("agree_threshold", 0.85),
+        hint_threshold=raw.get("hint_threshold", 0.5),
+        min_cue_duration=raw.get("min_cue_duration", 0.5),
+        min_cue_chars=raw.get("min_cue_chars", 2),
+        llm_adjudicate=raw.get("llm_adjudicate", True),
+        llm_batch_size=raw.get("llm_batch_size", 50),
+    )

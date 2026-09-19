@@ -373,8 +373,11 @@ class TestTranscribeByVadSegments:
         backend = MagicMock()
         backend.transcribe.return_value.segments = [ws(0.0, 1.0, "x")]
 
-        # Two VADs 0.3s apart, merge_gap=0.5 → merged into one clip
         segs = [vs(0, 5.0, 6.0), vs(1, 6.3, 7.0)]
-        transcribe_by_vad_segments(audio, segs, backend, make_cfg())
+
+        cfg = make_cfg()
+        cfg = replace(cfg, vad_segments=replace(cfg.vad_segments, merge_gap=0.5))
+
+        transcribe_by_vad_segments(audio, segs, backend, cfg)
 
         assert backend.transcribe.call_count == 1
