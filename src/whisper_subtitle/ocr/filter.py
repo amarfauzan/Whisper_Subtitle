@@ -152,6 +152,27 @@ def filter_repeated_texts(
         )
     return kept
 
+def find_repeated_texts(
+    events: list[OcrEvent],
+    max_repeats: int,
+) -> set[str]:
+    """Return the set of texts that appear more than max_repeats times.
+
+    Used as a pre-filter in the double-grouper OCR pipeline. The caller
+    drops all raw detections whose text is in this set, then runs the
+    frame merge on what survives.
+
+    If max_repeats <= 0, the filter is disabled and an empty set is
+    returned.
+    """
+    if max_repeats <= 0:
+        return set()
+
+    counts: dict[str, int] = {}
+    for ev in events:
+        counts[ev.text] = counts.get(ev.text, 0) + 1
+
+    return {t for t, c in counts.items() if c > max_repeats}
 
 def _normalize_for_repeat(text: str) -> str:
     """Lowercase and strip whitespace. Matches the grouper's normalization."""

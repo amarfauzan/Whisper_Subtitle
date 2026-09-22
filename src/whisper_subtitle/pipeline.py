@@ -2,11 +2,12 @@
 
 import logging
 from pathlib import Path
+import re
 
 from whisper_subtitle.config import Config
 from whisper_subtitle.exceptions import PipelineError
 from whisper_subtitle.media.ffmpeg import Chunk, extract_audio, split_video
-from whisper_subtitle.models import OcrEvent, Subtitle
+from whisper_subtitle.models import OcrDetection, OcrEvent, Subtitle
 from whisper_subtitle.ocr.engine import PaddleOcrEngine
 from whisper_subtitle.ocr.filter import (
     events_to_subtitles,
@@ -26,6 +27,10 @@ from whisper_subtitle.transcription.whisper_backend import (
     make_whisper_backend,
 )
 from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
+from whisper_subtitle.ocr.frame_merge import merge_frame_detections
+from whisper_subtitle.ocr.filter import find_repeated_texts
+from whisper_subtitle.subtitles.merge import merge_whisper_ocr
+
 
 log = logging.getLogger(__name__)
 
@@ -62,28 +67,20 @@ def process_video(input_path: Path, cfg: Config, *, translate: bool = False) -> 
 def _process_all_merged(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
     engine = _build_ocr_engine(cfg)
 
-    if cfg.merge.parallel:
-        log.info("Running whisper and OCR in parallel")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            whisper_future = pool.submit(_run_whisper_over_chunks, chunks, cfg)
-            ocr_future = pool.submit(_run_ocr_over_chunks, chunks, cfg, engine)
-            whisper_subs = whisper_future.result()
-            ocr_events = ocr_future.result()
-    else:
-        log.info("Running whisper and OCR sequentially")
-        whisper_subs = _run_whisper_over_chunks(chunks, cfg)
-        ocr_events = _run_ocr_over_chunks(chunks, cfg, engine)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        whisper_future = pool.submit(_run_whisper_over_chunks, chunks, cfg)
+        ocr_future = pool.submit(_run_ocr_over_chunks, chunks, cfg, engine)
+        whisper_subs = whisper_future.result()
+        ocr_events = ocr_future.result()
 
     log.info(
         "Chunk processing complete: %d whisper subs, %d OCR events",
         len(whisper_subs), len(ocr_events),
     )
 
-    ocr_events = filter_repeated_texts(ocr_events, cfg.ocr.filter.max_text_repeats)
-    ocr_events = _run_llm_filter_if_enabled(ocr_events, cfg)
-
-    from whisper_subtitle.subtitles.merge import merge_whisper_ocr
     return merge_whisper_ocr(whisper_subs, ocr_events, cfg.merge)
+
+
 
 def _run_whisper_over_chunks(
     chunks: list[Chunk],
@@ -102,39 +99,116 @@ def _run_whisper_over_chunks(
             all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
     return all_subs
 
-
 def _run_ocr_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
 ) -> list[OcrEvent]:
-    """Process every chunk through the OCR pipeline.
-
-    Only runs the heavy work: inference, grouping, per-event filter.
-    The repeat filter and LLM filter run once, globally, after both
-    threads join — that's why they live in _process_all_merged and not
-    here.
-    """
-    all_events: list[OcrEvent] = []
-    for i, chunk in enumerate(chunks, start=1):
-        log.info("OCR chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        all_events.extend(_ocr_chunk_events(chunk, cfg, engine))
-    return all_events
-
+    """Used by merged mode. Calls the same pipeline as OCR-only."""
+    return _run_ocr_pipeline(chunks, cfg, engine)
 
 def _process_all_ocr(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
     engine = _build_ocr_engine(cfg)
-
-    all_events: list[OcrEvent] = []
-    for i, chunk in enumerate(chunks, start=1):
-        log.info("Chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        all_events.extend(_ocr_chunk_events(chunk, cfg, engine))
-
-    log.info("Running global filters across %d events", len(all_events))
-    kept = filter_repeated_texts(all_events, cfg.ocr.filter.max_text_repeats)
-    kept = _run_llm_filter_if_enabled(kept, cfg)
+    kept = _run_ocr_pipeline(chunks, cfg, engine)
     return events_to_subtitles(kept)
 
+def _run_ocr_pipeline(
+    chunks: list[Chunk],
+    cfg: Config,
+    engine: PaddleOcrEngine,
+) -> list[OcrEvent]:
+    """Run the full OCR pipeline. Returns final filtered events.
+
+    Used by both OCR-only mode and merged mode. The pipeline:
+
+        sample per chunk
+          -> blocklist
+          -> counting grouper
+          -> global repeat-text detection
+          -> drop repeated detections
+          -> frame-level spatial merge
+          -> final grouper
+          -> per-event filter
+          -> optional LLM filter
+    """
+    all_dets: list[OcrDetection] = []
+    counting_events: list[OcrEvent] = []
+    frame_height = 0
+
+    for i, chunk in enumerate(chunks, start=1):
+        log.info("OCR chunk %d/%d: %s", i, len(chunks), chunk.path.name)
+        dets, events_a, h = _ocr_chunk_pass_a(chunk, cfg, engine)
+        all_dets.extend(dets)
+        counting_events.extend(events_a)
+        frame_height = h
+
+    log.info(
+        "Counting pass complete: %d detections, %d events",
+        len(all_dets), len(counting_events),
+    )
+
+    repeated = find_repeated_texts(
+        counting_events, cfg.ocr.filter.max_text_repeats
+    )
+    log.info("Repeat filter: %d unique texts flagged", len(repeated))
+
+    surviving = [d for d in all_dets if d.text not in repeated]
+    log.info(
+        "After repeat-text drop: %d detections (dropped %d)",
+        len(surviving), len(all_dets) - len(surviving),
+    )
+
+    merged = merge_frame_detections(surviving)
+
+    events = group_detections(merged)
+    log.info("Grouper: %d events", len(events))
+
+    kept = filter_events(events, cfg.ocr.filter, frame_height=frame_height)
+    log.info("Per-event filter: %d events kept", len(kept))
+
+    kept = _run_llm_filter_if_enabled(kept, cfg)
+    return kept
+
+
+def _ocr_chunk_pass_a(
+    chunk: Chunk,
+    cfg: Config,
+    engine: PaddleOcrEngine,
+) -> tuple[list[OcrDetection], list[OcrEvent], int]:
+    """One chunk's OCR pass: sample, blocklist, group, shift to global time."""
+    detections, frame_height = sample_and_detect(chunk.path, engine, cfg.ocr)
+
+    # Blocklist filter on raw detections
+    patterns = [re.compile(p) for p in cfg.ocr.filter.blocklist_patterns]
+    blocklist = {t.lower() for t in cfg.ocr.filter.blocklist_texts}
+
+    filtered = []
+    for d in detections:
+        text = d.text.strip()
+        if not text:
+            continue
+        if text.lower() in blocklist:
+            continue
+        if any(p.fullmatch(text) for p in patterns):
+            continue
+        filtered.append(d)
+
+    # Counting grouper — events here feed only the repeat filter
+    counting_events = group_detections(filtered)
+
+    # Shift onto global timeline
+    if chunk.offset:
+        filtered = [
+            OcrDetection(
+                frame_time=d.frame_time + chunk.offset,
+                box=d.box, text=d.text,
+                angle=d.angle, confidence=d.confidence,
+            )
+            for d in filtered
+        ]
+        counting_events = shift_ocr_events(counting_events, chunk.offset)
+
+    return filtered, counting_events, frame_height
 
 def _run_llm_filter_if_enabled(
     events: list[OcrEvent],
@@ -205,19 +279,6 @@ def _process_chunk_whisper(
     if chunk.offset:
         subtitles = shift_timeline(subtitles, chunk.offset)
     return subtitles
-
-def _ocr_chunk_events(
-    chunk: Chunk,
-    cfg: Config,
-    engine: PaddleOcrEngine,
-) -> list[OcrEvent]:
-    """Run OCR on one chunk and return filtered events shifted to the global timeline."""
-    detections, frame_height = sample_and_detect(chunk.path, engine, cfg.ocr)
-    events = group_detections(detections)
-    kept = filter_events(events, cfg.ocr.filter, frame_height=frame_height)
-    if chunk.offset:
-        kept = shift_ocr_events(kept, chunk.offset)
-    return kept
 
 
 def _run_translation(

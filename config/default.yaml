@@ -53,15 +53,15 @@ transcription:
 
 ocr:
   enabled: false
-  crop_top_ratio: 0.0
-  crop_bottom_ratio: 0.0
-  crop_left_ratio: 0.0
-  crop_right_ratio: 0.0
+  crop_top_ratio: 0.3
+  crop_bottom_ratio: 0.05
+  crop_left_ratio: 0.1
+  crop_right_ratio: 0.1
   providers: ["CPUExecutionProvider"]
-  sample_fps: 3
+  sample_fps: 2
   rec_confidence: 0.5
   llm_filter:
-    enabled: true
+    enabled: false
     model: deepseek-chat
     batch_size: 100
     min_events: 5

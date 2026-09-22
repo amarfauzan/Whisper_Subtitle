@@ -372,3 +372,36 @@ class TestRepeatedTexts:
     def test_negative_disables(self):
         events = [make_event(text="Sports Day") for _ in range(100)]
         assert len(filter_repeated_texts(events, max_repeats=-1)) == 100
+
+from whisper_subtitle.ocr.filter import find_repeated_texts
+
+
+class TestFindRepeatedTexts:
+    def test_empty(self):
+        assert find_repeated_texts([], 8) == set()
+
+    def test_none_over_threshold(self):
+        events = [make_event(text="a") for _ in range(3)]
+        assert find_repeated_texts(events, 8) == set()
+
+    def test_over_threshold(self):
+        events = [make_event(text="repeat") for _ in range(10)]
+        result = find_repeated_texts(events, 8)
+        assert result == {"repeat"}
+
+    def test_at_threshold_not_flagged(self):
+        events = [make_event(text="x") for _ in range(8)]
+        assert find_repeated_texts(events, 8) == set()
+
+    def test_multiple_texts(self):
+        events = (
+            [make_event(text="a") for _ in range(10)]
+            + [make_event(text="b") for _ in range(3)]
+            + [make_event(text="c") for _ in range(12)]
+        )
+        result = find_repeated_texts(events, 8)
+        assert result == {"a", "c"}
+
+    def test_zero_disables(self):
+        events = [make_event(text="x") for _ in range(100)]
+        assert find_repeated_texts(events, 0) == set()
