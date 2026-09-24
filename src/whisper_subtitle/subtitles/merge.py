@@ -42,17 +42,20 @@ def merge_whisper_ocr(
 ) -> list[Subtitle]:
     """Combine whisper subtitles and OCR events into one list.
 
+    Whisper always provides the cue text and timing. OCR events that
+    overlap a whisper cue are attached as `source_hint` so the
+    translation prompt can see both readings. OCR events that do not
+    overlap any whisper cue become gap-fills (own text, own timing),
+    if fill_gaps is enabled.
+
     Args:
-        whisper_subs: subtitles from the whisper path, already on the
-            global timeline.
-        ocr_events: OCR events that passed all filters, already on the
-            global timeline.
+        whisper_subs: subtitles from the whisper path, on the global timeline.
+        ocr_events: OCR events that passed all filters, on the global timeline.
         cfg: merge configuration.
 
     Returns:
         Combined subtitles, sorted by start time. Whisper entries may
-        carry a `source_hint` when the OCR reading was moderately
-        different (0.5 <= similarity < 0.9).
+        carry a `source_hint` when OCR overlapped them.
     """
     if not whisper_subs and not ocr_events:
         return []
@@ -73,13 +76,13 @@ def merge_whisper_ocr(
         claimed.add(match_idx)
         ocr_text = ocr_events[match_idx].text
 
+        # Attach the OCR reading as a hint for the LLM to use at
+        # translation time. On agreement (similarity >= agree_threshold)
+        # the OCR text is redundant and would only add noise, so skip it.
         if similarity >= cfg.agree_threshold:
             merged.append(sub)
-        elif similarity >= cfg.hint_threshold:
-            merged.append(replace(sub, source_hint=ocr_text))
         else:
-            # Different content — whisper wins, OCR event consumed.
-            merged.append(sub)
+            merged.append(replace(sub, source_hint=ocr_text))
 
     if cfg.fill_gaps:
         for i, ev in enumerate(ocr_events):

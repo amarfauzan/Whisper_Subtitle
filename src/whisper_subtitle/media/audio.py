@@ -68,3 +68,8 @@ def extract_clip(
         "Extracted clip: %.3fs → %.3fs (%d frames)",
         start_seconds, end_seconds, end_frame - start_frame,
     )
+
+def audio_duration(path: Path) -> float:
+    """Return the duration of a WAV file in seconds."""
+    with wave.open(str(path), "rb") as f:
+        return f.getnframes() / f.getframerate()

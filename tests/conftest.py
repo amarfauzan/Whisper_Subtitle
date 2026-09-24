@@ -4,6 +4,7 @@ from whisper_subtitle.config import (
     EnsembleConfig,
     VadSegmentsConfig,
     WhisperConfig,
+    DiagnosticsConfig
 )
 
 
@@ -49,6 +50,11 @@ def default_whisper_config(**overrides) -> WhisperConfig:
             min_cue_chars=2,
             llm_adjudicate=True,
             llm_batch_size=50,
+        ),
+        diagnostics=DiagnosticsConfig(
+            enabled=False,            # disable in tests
+            abort_on_loop=True,
+            save_intermediates=False,
         ),
     )
     base.update(overrides)

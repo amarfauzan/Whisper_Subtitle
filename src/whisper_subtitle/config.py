@@ -31,6 +31,11 @@ class EnsembleConfig:
     llm_adjudicate: bool
     llm_batch_size: int
 
+@dataclass(frozen=True)
+class DiagnosticsConfig:
+    enabled: bool
+    abort_on_loop: bool
+    save_intermediates: bool
 
 @dataclass(frozen=True)
 class WhisperConfig:
@@ -51,6 +56,7 @@ class WhisperConfig:
     strategy: str                     # ← new: "whole" or "vad_segments"
     vad_segments: VadSegmentsConfig   # ← new
     ensemble: EnsembleConfig  
+    diagnostics: DiagnosticsConfig
 
 @dataclass(frozen=True)
 class VadConfig:
@@ -132,6 +138,7 @@ class MergeConfig:
     parallel: bool         
 
 
+
 @dataclass(frozen=True)
 class Config:
     chunk_length_seconds: int
@@ -175,6 +182,11 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
                 min_coverage=raw["whisper"].get("vad_segments", {}).get("min_coverage", 0.9),
             ),
             ensemble=_load_ensemble_config(raw["whisper"]),
+            diagnostics=DiagnosticsConfig(
+                enabled=raw["whisper"].get("diagnostics", {}).get("enabled", True),
+                abort_on_loop=raw["whisper"].get("diagnostics", {}).get("abort_on_loop", True),
+                save_intermediates=raw["whisper"].get("diagnostics", {}).get("save_intermediates", True),
+        ),
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),

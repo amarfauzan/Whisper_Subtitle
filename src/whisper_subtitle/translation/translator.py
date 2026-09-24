@@ -203,10 +203,87 @@ def _build_prompt(subtitles: list[Subtitle], cfg: TranslationConfig) -> str:
     if has_hints:
         dual_source_block = f"""
 DUAL-SOURCE ENTRIES:
-Some entries have two lines, labeled WHISPER and OCR. These are two
-readings of the same speech from different systems. Pick whichever
-reads as more natural and correct in {cfg.source_language}, then
-translate that one. Do not mix the two readings into one translation.
+
+Some entries have two lines:
+
+  [WHISPER] — audio transcription
+  [OCR]     — on-screen text detection
+
+These are readings of the same moment, not two separate subtitles.
+
+Apply the FIRST rule that matches:
+
+RULE 1 — UNRELATED:
+  [OCR] is a sign, logo, or background caption with no relation to
+  the dialogue. Translate [WHISPER] only. Ignore [OCR].
+
+RULE 2 — CORRECTION:
+  Same sentence, same meaning, but one reading has a character
+  error. Output ONLY the more correct version. One line. No brackets.
+  Prefer [OCR] for names, numbers, and proper nouns (it read the
+  actual letters). Prefer [WHISPER] for grammar and verb endings.
+
+  Example (name correction):
+    [WHISPER] 경윤이 안녕
+    [OCR]     경은이 안녕
+    →  Kyung-eun, hello.
+
+  Example (particle correction):
+    [WHISPER] 밥을 먹었어
+    [OCR]     밥은 먹었어
+    →  I ate (at least).
+
+RULE 3 — REPHRASE:
+  Same sentence, slightly different wording, neither is wrong.
+  Output the version that reads more naturally. One line. No brackets.
+
+  Example:
+    [WHISPER] 집중하세요
+    [OCR]     집중!
+    →  Pay attention!
+
+  Example:
+    [WHISPER] 나가노인가?
+    [OCR]     나가노인가?
+    →  Is it Nagano?
+
+RULE 4 — SUPPLEMENT (bracket):
+
+  If the [OCR] line contains at least one Arabic digit (0-9) OR a
+  romanized proper noun (a name, brand, or place written in Latin
+  letters), add the OCR text as a bracket line ABOVE the dialogue.
+
+  Do not try to judge whether the fact is "important." If there's
+  a digit or a romanized name in [OCR], bracket it.
+
+  Examples that MUST be bracketed:
+    [WHISPER] 이 식당은 오래됐어요
+    [OCR]     1950년 오픈
+    →  [Opened in 1950]
+       This restaurant has been around a long time.
+
+    [WHISPER] 여기 유명해요
+    [OCR]     부산 자갈치시장
+    →  [Busan Jagalchi Market]
+       This place is famous.
+
+    [WHISPER] 이게 뭐야?
+    [OCR]     B1A4 앨범
+    →  [B1A4 album]
+       What is this?
+
+  Examples that are NOT bracketed (no digit, no romanization):
+    [WHISPER] 집중하세요
+    [OCR]     집중!
+    →  Pay attention!
+
+    [WHISPER] 경윤이 안녕
+    [OCR]     경은이 안녕
+    →  Kyung-eun, hello.
+
+RULE 5 — DEFAULT:
+  When uncertain between correction, rephrase, and supplement,
+  choose correction or rephrase.
 """
 
     return f"""\

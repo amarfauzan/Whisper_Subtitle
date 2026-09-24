@@ -155,7 +155,8 @@ class TestModerateSimilarity:
 
 
 class TestDifferentContent:
-    def test_whisper_wins_no_hint(self):
+    def test_whisper_wins_text(self):
+        """Whisper text wins, but OCR is attached as hint under new policy."""
         result = merge_whisper_ocr(
             [ws(1.0, 3.0, "안녕하세요")],
             [ocr(1.0, 3.0, "TOKYO")],
@@ -163,17 +164,15 @@ class TestDifferentContent:
         )
         assert len(result) == 1
         assert result[0].text == "안녕하세요"
-        assert result[0].source_hint is None
+        assert result[0].source_hint == "TOKYO"
 
-    def test_different_content_not_gap_filled(self):
-        # Even with fill_gaps on, an OCR event overlapping a whisper
-        # sub should not become its own entry.
+    def test_different_content_still_blocks_gap_fill(self):
         result = merge_whisper_ocr(
             [ws(1.0, 3.0, "안녕하세요")],
             [ocr(1.0, 3.0, "TOKYO")],
             cfg(fill_gaps=True),
         )
-        assert len(result) == 1
+        assert len(result) == 1  # OCR event consumed as hint, no gap-fill
 
 
 class TestGapFill:

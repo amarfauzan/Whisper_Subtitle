@@ -30,6 +30,11 @@ from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segment
 from whisper_subtitle.ocr.frame_merge import merge_frame_detections
 from whisper_subtitle.ocr.filter import find_repeated_texts
 from whisper_subtitle.subtitles.merge import merge_whisper_ocr
+from whisper_subtitle.persistence import (
+    save_diagnostic_report,
+    save_ocr_events,
+    save_transcription,
+)
 
 
 log = logging.getLogger(__name__)
@@ -116,6 +121,7 @@ def _run_ocr_pipeline(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
+    output_dir
 ) -> list[OcrEvent]:
     """Run the full OCR pipeline. Returns final filtered events.
 
@@ -167,7 +173,17 @@ def _run_ocr_pipeline(
     log.info("Per-event filter: %d events kept", len(kept))
 
     kept = _run_llm_filter_if_enabled(kept, cfg)
+        # Save combined OCR output for diagnostics
+    if cfg.whisper.diagnostics.save_intermediates:
+        save_ocr_events(
+            kept,
+            output_dir / "ocr.json",
+            chunk="all",
+            frame_height=frame_height,
+            stage="final",
+        )
     return kept
+
 
 
 def _ocr_chunk_pass_a(

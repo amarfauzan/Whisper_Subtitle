@@ -69,8 +69,14 @@ class TestBuildPrompt:
             [sub("first"), sub("second", hint="scond"), sub("third")],
             make_cfg(),
         )
-        assert prompt.count("[WHISPER]") == 1
-        assert prompt.count("[OCR]") == 1
+        # The prompt's instruction block contains examples with the same
+        # markers. Count only the entries section — everything after the
+        # first SRT marker.
+        entries_start = prompt.find("<<<SRT_001>>>")
+        assert entries_start != -1
+        entry_section = prompt[entries_start:]
+        assert entry_section.count("[WHISPER]") == 1
+        assert entry_section.count("[OCR]") == 1
 
     def test_includes_source_and_target_language(self):
         prompt = _build_prompt(
