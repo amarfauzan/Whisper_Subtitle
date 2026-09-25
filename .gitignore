@@ -10,6 +10,7 @@ build/
 dist/
 output/
 *.wav
+*.png
 *.mp4
 *.mkv
 /*.srt

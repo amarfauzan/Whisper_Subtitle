@@ -121,7 +121,6 @@ def _run_ocr_pipeline(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
-    output_dir
 ) -> list[OcrEvent]:
     """Run the full OCR pipeline. Returns final filtered events.
 
@@ -174,7 +173,9 @@ def _run_ocr_pipeline(
 
     kept = _run_llm_filter_if_enabled(kept, cfg)
         # Save combined OCR output for diagnostics
-    if cfg.whisper.diagnostics.save_intermediates:
+    # Save combined OCR output for diagnostics
+    if cfg.whisper.diagnostics.save_intermediates and chunks:
+        output_dir = chunks[0].path.parent
         save_ocr_events(
             kept,
             output_dir / "ocr.json",
@@ -182,6 +183,7 @@ def _run_ocr_pipeline(
             frame_height=frame_height,
             stage="final",
         )
+
     return kept
 
 

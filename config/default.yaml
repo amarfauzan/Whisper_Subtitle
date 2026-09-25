@@ -2,7 +2,7 @@ chunk_length_seconds: 600
 
 whisper:
   ensemble:
-    enabled: true              # opt-in for now
+    enabled: false              # opt-in for now
     secondary_port: 8081
     overlap_threshold: 0.4
     agree_threshold: 0.85
@@ -13,7 +13,7 @@ whisper:
     llm_batch_size: 50
   mode: server
   strategy: vad_segments            # ← new: whole | vad_segments
-  language: ko
+  language: ja
   beam_size: 3
   best_of: 3
   max_line_length: 30
@@ -45,7 +45,7 @@ translation:
   base_url: https://api.deepseek.com/v1
   model: deepseek-v4-flash
   disable_thinking: true
-  source_language: Korean
+  source_language: Japanese
   target_language: English
   batch_size: 100
   max_retries: 3
