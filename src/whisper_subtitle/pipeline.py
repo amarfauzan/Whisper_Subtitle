@@ -33,6 +33,7 @@ from whisper_subtitle.subtitles.merge import merge_whisper_ocr
 from whisper_subtitle.persistence import (
     save_diagnostic_report,
     save_ocr_events,
+    save_raw_whisper_chunk,
     save_transcription,
 )
 
@@ -121,7 +122,6 @@ def _run_ocr_pipeline(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
-    output_dir
 ) -> list[OcrEvent]:
     """Run the full OCR pipeline. Returns final filtered events.
 
@@ -174,7 +174,9 @@ def _run_ocr_pipeline(
 
     kept = _run_llm_filter_if_enabled(kept, cfg)
         # Save combined OCR output for diagnostics
-    if cfg.whisper.diagnostics.save_intermediates:
+    # Save combined OCR output for diagnostics
+    if cfg.whisper.diagnostics.save_intermediates and chunks:
+        output_dir = chunks[0].path.parent
         save_ocr_events(
             kept,
             output_dir / "ocr.json",
@@ -182,6 +184,7 @@ def _run_ocr_pipeline(
             frame_height=frame_height,
             stage="final",
         )
+
     return kept
 
 
@@ -272,20 +275,45 @@ def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
             all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
     return all_subs
 
-def _process_chunk_whisper(
-    chunk: Chunk,
-    cfg: Config,
-    backend: WhisperBackend,
-) -> list[Subtitle]:
+def _process_chunk_whisper(chunk, cfg, backend):
     audio = extract_audio(chunk.path)
     vad_segments = run_vad(audio, cfg.vad)
 
+    # Clear raw accumulator for this chunk
+    if hasattr(backend, "raw_responses"):
+        backend.raw_responses.clear()
+
     if cfg.whisper.strategy == "vad_segments":
-        whisper_segments = transcribe_vad_segments(
+        whisper_segments = transcribe_by_vad_segments(
             audio, vad_segments, backend, cfg.whisper
         )
     else:
         whisper_segments = backend.transcribe(audio).segments
+
+    # Existing: save parsed
+    if cfg.whisper.diagnostics.save_intermediates:
+        save_transcription(
+            whisper_segments,
+            chunk.path.parent / f"{chunk.path.stem}.primary.json",
+            source="primary",
+            model=cfg.whisper.model.name,
+            chunk=chunk.path.name,
+        )
+
+    # NEW: save raw server responses
+    if (
+        cfg.whisper.diagnostics.save_raw_whisper
+        and hasattr(backend, "raw_responses")
+        and backend.raw_responses
+    ):
+        save_raw_whisper_chunk(
+            backend.raw_responses,
+            chunk.path.parent / f"{chunk.path.stem}.primary.raw.json",
+            source="primary",
+            model=cfg.whisper.model.name,
+            chunk=chunk.path.name,
+        )
+
 
     subtitles = merge_vad_and_whisper(
         vad_segments,

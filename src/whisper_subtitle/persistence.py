@@ -99,7 +99,34 @@ def save_ocr_events(
     )
     log.debug("Saved OCR %s (%d events) → %s", stage, len(events), json_path.name)
 
+def save_raw_whisper_chunk(
+    responses: list[dict],
+    out_path: Path,
+    *,
+    source: str,
+    model: str,
+    chunk: str,
+) -> None:
+    """Write the raw whisper-server responses for one chunk.
 
+    Each entry in `responses` is the exact JSON payload returned by
+    one whisper-server /inference call. No transformation applied.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source": source,
+        "model": model,
+        "chunk": chunk,
+        "batch_count": len(responses),
+        "batches": responses,
+    }
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    log.debug("Saved raw whisper (%s, %d batches) → %s",
+              source, len(responses), out_path.name)
+    
 def load_ocr_events(json_path: Path) -> list[OcrEvent]:
     data = json.loads(json_path.read_text(encoding="utf-8"))
     return [

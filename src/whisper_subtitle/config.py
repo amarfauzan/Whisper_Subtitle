@@ -36,6 +36,7 @@ class DiagnosticsConfig:
     enabled: bool
     abort_on_loop: bool
     save_intermediates: bool
+    save_raw_whisper: bool    # ← new
 
 @dataclass(frozen=True)
 class WhisperConfig:
@@ -186,7 +187,8 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
                 enabled=raw["whisper"].get("diagnostics", {}).get("enabled", True),
                 abort_on_loop=raw["whisper"].get("diagnostics", {}).get("abort_on_loop", True),
                 save_intermediates=raw["whisper"].get("diagnostics", {}).get("save_intermediates", True),
-        ),
+                save_raw_whisper=raw["whisper"].get("diagnostics", {}).get("save_raw_whisper", False),
+            ),
         ),
         vad=VadConfig(
             exe=Path(os.environ["VAD_EXE"]),

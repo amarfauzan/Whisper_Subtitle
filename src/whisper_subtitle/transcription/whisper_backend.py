@@ -58,6 +58,10 @@ class ServerBackend:
     def __init__(self, cfg: WhisperConfig) -> None:
         self.cfg = cfg
         self.process: subprocess.Popen | None = None
+        self.raw_responses: list[dict] = []   # NEW
+
+    def transcribe(self, audio_path: Path) -> WhisperResult:
+        return _transcribe_via_server(audio_path, self.cfg, self.raw_responses)
 
     def __enter__(self) -> "ServerBackend":
         self.process = _start_server(self.cfg)
@@ -84,10 +88,6 @@ class ServerBackend:
             log.warning("Server did not stop in 5s, killing")
             self.process.kill()
             self.process.wait()
-
-    def transcribe(self, audio_path: Path) -> WhisperResult:
-        return _transcribe_via_server(audio_path, self.cfg)
-
 
 def make_whisper_backend(cfg: WhisperConfig) -> WhisperBackend:
     """Return the backend selected by cfg.mode."""
@@ -155,6 +155,7 @@ def _wait_for_port(host: str, port: int, timeout: float) -> None:
 def _transcribe_via_server(
     audio_path: Path,
     cfg: WhisperConfig,
+    raw_sink: list[dict] | None = None,
 ) -> WhisperResult:
     url = f"http://{cfg.server_host}:{cfg.server_port}/inference"
     log.info("Sending %s to whisper server", audio_path.name)
@@ -185,6 +186,10 @@ def _transcribe_via_server(
 
     try:
         payload = response.json()
+
+        if raw_sink is not None:
+            raw_sink.append(payload)
+
     except ValueError as exc:
         raise WhisperError(
             f"Invalid JSON from whisper server: {exc}"

@@ -11,7 +11,7 @@ whisper:
     min_cue_chars: 2
     llm_adjudicate: true
     llm_batch_size: 50
-  mode: server
+  mode: server  
   strategy: vad_segments            # ← new: whole | vad_segments
   language: ko
   beam_size: 3
@@ -26,6 +26,7 @@ whisper:
     enabled: true
     abort_on_loop: true
     save_intermediates: true
+    save_raw_whisper: false
   
   vad_segments:
     padding: 0.15
