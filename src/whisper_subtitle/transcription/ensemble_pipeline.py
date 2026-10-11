@@ -16,26 +16,29 @@ from dataclasses import replace
 from pathlib import Path
 
 from whisper_subtitle.config import Config
+from whisper_subtitle.exceptions import PipelineError
+from whisper_subtitle.media.audio import audio_duration
 from whisper_subtitle.media.ffmpeg import Chunk, extract_audio
 from whisper_subtitle.media.vocal_separation import separate_vocals
 from whisper_subtitle.models import Subtitle, VadSegment, WhisperSegment
-from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
+from whisper_subtitle.persistence import (
+    save_diagnostic_report,
+    save_transcription,
+)
 from whisper_subtitle.subtitles.timeline import shift_timeline
+from whisper_subtitle.transcription.diagnostics import diagnose_transcription
 from whisper_subtitle.transcription.ensemble import merge_ensemble
 from whisper_subtitle.transcription.llm_ensemble import adjudicate_requests
 from whisper_subtitle.transcription.vad import run_vad
 from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
 from whisper_subtitle.transcription.whisper_backend import make_whisper_backend
 
-from whisper_subtitle.exceptions import PipelineError
-from whisper_subtitle.media.audio import audio_duration
-from whisper_subtitle.persistence import (
-    save_diagnostic_report,
-    save_transcription,
-)
-from whisper_subtitle.transcription.diagnostics import diagnose_transcription
-
 log = logging.getLogger(__name__)
+
+# How far a cue may be stretched past whisper's own end to fill a VAD
+# speech region. Without a cap, one short line can occupy a whole
+# multi-second region.
+_MAX_VAD_EXTENSION = 1.0
 
 
 def process_chunks_with_ensemble(
@@ -63,6 +66,14 @@ def process_chunks_with_ensemble(
         for i, chunk in enumerate(chunks, start=1):
             log.info("Primary chunk %d/%d: %s", i, len(chunks), chunk.path.name)
             audio = extract_audio(chunk.path)
+
+            # Run vocal separation before VAD so both the VAD boundaries
+            # and the transcription use the vocals-only audio. Phase 2
+            # reuses this same audio (separate_vocals caches) and these
+            # same VAD segments, so both models see identical input.
+            if cfg.uvr.enabled:
+                audio = separate_vocals(audio, cfg.uvr)
+
             vad = run_vad(audio, cfg.vad)
             segs = transcribe_vad_segments(audio, vad, primary, cfg.whisper)
 
@@ -101,7 +112,8 @@ def process_chunks_with_ensemble(
             log.info("Secondary chunk %d/%d: %s", i, len(chunks), chunk.path.name)
             audio = extract_audio(chunk.path)
 
-            #run with vocal remover
+            # Vocals were already separated during phase 1; this call
+            # reuses the cached output (or re-runs if missing).
             if cfg.uvr.enabled:
                 audio = separate_vocals(audio, cfg.uvr)
 
@@ -223,12 +235,18 @@ def _diagnose_and_maybe_abort(
 def _clip_to_vad(
     cues: list[WhisperSegment],
     vad_segments: list[VadSegment],
+    *,
+    max_extension: float = _MAX_VAD_EXTENSION,
 ) -> list[WhisperSegment]:
     """Clip each cue to the VAD speech region(s) it overlaps.
 
     Drops cues that don't overlap any VAD segment (whisper predicted
-    speech in silence). If a cue spans multiple VAD segments, clips to
-    the union. Preserves the cue's original timing within speech.
+    speech in silence). A cue that spans multiple VAD segments is
+    clipped to their union, but never extended more than
+    `max_extension` seconds past whisper's own end — otherwise a short
+    line like "진짜 꿀이네." ends up on screen for 9 seconds.
+
+    Cues are also prevented from running into the next cue.
     """
     result: list[WhisperSegment] = []
     for cue in cues:
@@ -242,10 +260,16 @@ def _clip_to_vad(
         clip_start = min(v.start for v in overlapping)
         clip_end = max(v.end for v in overlapping)
         new_start = max(cue.start, clip_start)
-        new_end = min(cue.end, clip_end)
+        new_end = min(cue.end + max_extension, clip_end)
 
         if new_end - new_start < 0.1:
             continue
 
         result.append(replace(cue, start=new_start, end=new_end))
-    return result
+
+    # Never let one cue's displayed text bleed into the next cue.
+    result.sort(key=lambda c: c.start)
+    for i in range(len(result) - 1):
+        if result[i].end > result[i + 1].start:
+            result[i] = replace(result[i], end=result[i + 1].start)
+    return [c for c in result if c.end > c.start]

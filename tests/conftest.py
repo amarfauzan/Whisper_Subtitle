@@ -1,10 +1,10 @@
 from pathlib import Path
 
 from whisper_subtitle.config import (
+    DiagnosticsConfig,
     EnsembleConfig,
     VadSegmentsConfig,
     WhisperConfig,
-    DiagnosticsConfig
 )
 
 
@@ -55,6 +55,7 @@ def default_whisper_config(**overrides) -> WhisperConfig:
             enabled=False,            # disable in tests
             abort_on_loop=True,
             save_intermediates=False,
+            save_raw_whisper=False,
         ),
     )
     base.update(overrides)

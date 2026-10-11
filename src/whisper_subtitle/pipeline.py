@@ -1,44 +1,39 @@
 """Orchestrate the video → SRT pipeline."""
 
 import logging
-from pathlib import Path
 import re
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from whisper_subtitle.config import Config
 from whisper_subtitle.exceptions import PipelineError
 from whisper_subtitle.media.ffmpeg import Chunk, extract_audio, split_video
+from whisper_subtitle.media.vocal_separation import separate_vocals
 from whisper_subtitle.models import OcrDetection, OcrEvent, Subtitle
 from whisper_subtitle.ocr.engine import PaddleOcrEngine
 from whisper_subtitle.ocr.filter import (
     events_to_subtitles,
     filter_events,
-    filter_repeated_texts,
+    find_repeated_texts,
+    normalize_repeat_text,
     pad_event_timestamps,
 )
-from whisper_subtitle.transcription.vad_transcribe import transcribe_by_vad_segments
+from whisper_subtitle.ocr.frame_merge import merge_frame_detections
 from whisper_subtitle.ocr.grouper import group_detections
 from whisper_subtitle.ocr.runner import sample_and_detect
-from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
-from whisper_subtitle.subtitles.srt import render_srt
-from whisper_subtitle.subtitles.timeline import shift_ocr_events, shift_timeline
-from whisper_subtitle.transcription.vad import run_vad
-from concurrent.futures import ThreadPoolExecutor
-from whisper_subtitle.transcription.whisper_backend import (
-    WhisperBackend,
-    make_whisper_backend,
-)
-from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
-from whisper_subtitle.ocr.frame_merge import merge_frame_detections
-from whisper_subtitle.ocr.filter import find_repeated_texts
-from whisper_subtitle.subtitles.merge import merge_whisper_ocr
 from whisper_subtitle.persistence import (
-    save_diagnostic_report,
     save_ocr_events,
     save_raw_whisper_chunk,
     save_transcription,
 )
-from whisper_subtitle.media.vocal_separation import separate_vocals
-
+from whisper_subtitle.subtitles.merge import merge_whisper_ocr
+from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
+from whisper_subtitle.subtitles.split import split_long_subtitles
+from whisper_subtitle.subtitles.srt import render_srt
+from whisper_subtitle.subtitles.timeline import shift_ocr_events, shift_timeline
+from whisper_subtitle.transcription.vad import run_vad
+from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
+from whisper_subtitle.transcription.whisper_backend import make_whisper_backend
 
 log = logging.getLogger(__name__)
 
@@ -61,13 +56,24 @@ def process_video(input_path: Path, cfg: Config, *, translate: bool = False) -> 
     else:
         all_subs = _process_all_whisper(chunks, cfg)
 
+    # Shape the final cues: server mode never applies whisper-cli's line
+    # splitting, so over-long cues are chopped here.
+    all_subs = split_long_subtitles(
+        all_subs,
+        max_chars=cfg.subtitles.max_chars_per_cue,
+        max_duration=cfg.subtitles.max_cue_duration,
+        min_duration=cfg.subtitles.min_cue_duration,
+    )
 
     final_srt = output_dir / f"{input_path.stem}.srt"
     final_srt.write_text(render_srt(all_subs), encoding="utf-8")
     log.info("Wrote %s (%d subtitles)", final_srt.name, len(all_subs))
 
     if translate:
-        _run_translation(all_subs, final_srt, cfg)
+        if not all_subs:
+            log.warning("No subtitles produced; skipping translation.")
+        else:
+            _run_translation(all_subs, final_srt, cfg)
 
     return final_srt
 
@@ -144,27 +150,49 @@ def _run_ocr_pipeline(
     """
     all_dets: list[OcrDetection] = []
     counting_events: list[OcrEvent] = []
-    frame_height = 0
+    frame_heights: set[int] = set()
+
+    # Compile blocklist patterns once instead of once per chunk.
+    patterns = [re.compile(p) for p in cfg.ocr.filter.blocklist_patterns]
+    blocklist = {t.lower() for t in cfg.ocr.filter.blocklist_texts}
 
     for i, chunk in enumerate(chunks, start=1):
         log.info("OCR chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        dets, events_a, h = _ocr_chunk_pass_a(chunk, cfg, engine)
+        dets, events_a, h = _ocr_chunk_pass_a(chunk, cfg, engine, patterns, blocklist)
         all_dets.extend(dets)
         counting_events.extend(events_a)
-        frame_height = h
+        frame_heights.add(h)
+
+    # All chunks come from one video, so heights should agree. Guard
+    # against surprising resolutions instead of silently using the last.
+    frame_height = max(frame_heights) if frame_heights else 0
+    if len(frame_heights) > 1:
+        log.warning(
+            "Chunks report differing frame heights %s; using %d for "
+            "box-height ratios",
+            sorted(frame_heights), frame_height,
+        )
 
     log.info(
         "Counting pass complete: %d detections, %d events",
         len(all_dets), len(counting_events),
     )
 
-    #filter repeated text
+    # Filter repeated text. Comparison uses the same normalization as
+    # the grouper (case-folded, whitespace-stripped) so "MINAMI" and
+    # "minami " land in the same bucket. Only persistent repetitions
+    # (watermarks, nametags) are flagged — burst repeats are real
+    # dialogue and stay.
     repeated = find_repeated_texts(
-        counting_events, cfg.ocr.filter.max_text_repeats
+        counting_events,
+        cfg.ocr.filter.max_text_repeats,
+        cfg.ocr.filter.repeat_span_seconds,
     )
     log.info("Repeat filter: %d unique texts flagged", len(repeated))
 
-    surviving = [d for d in all_dets if d.text not in repeated]
+    surviving = [
+        d for d in all_dets if normalize_repeat_text(d.text) not in repeated
+    ]
     log.info(
         "After repeat-text drop: %d detections (dropped %d)",
         len(surviving), len(all_dets) - len(surviving),
@@ -207,15 +235,13 @@ def _ocr_chunk_pass_a(
     chunk: Chunk,
     cfg: Config,
     engine: PaddleOcrEngine,
+    blocklist_patterns: list[re.Pattern[str]],
+    blocklist: set[str],
 ) -> tuple[list[OcrDetection], list[OcrEvent], int]:
     """One chunk's OCR pass: sample, blocklist, group, shift to global time."""
     detections, frame_height = sample_and_detect(chunk.path, engine, cfg.ocr)
 
-    # Blocklist filter on raw detections
-    patterns = [re.compile(p) for p in cfg.ocr.filter.blocklist_patterns]
-    blocklist = {t.lower() for t in cfg.ocr.filter.blocklist_texts}
-
-    # apply the blocklist on detections- append to filered list
+    # Apply the blocklist on detections — append to filtered list
     filtered = []
     for d in detections:
         text = d.text.strip()
@@ -223,7 +249,7 @@ def _ocr_chunk_pass_a(
             continue
         if text.lower() in blocklist:
             continue
-        if any(p.fullmatch(text) for p in patterns):
+        if any(p.fullmatch(text) for p in blocklist_patterns):
             continue
         filtered.append(d)
 
@@ -293,7 +319,8 @@ def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
 def _process_chunk_whisper(chunk, cfg, backend):
     audio = extract_audio(chunk.path)
 
-    #run with vocal remover 
+    # Optional vocal separation, applied before VAD so both the VAD
+    # boundaries and the transcription use the vocals-only audio.
     if cfg.uvr.enabled:
         audio = separate_vocals(audio, cfg.uvr)
 
@@ -304,7 +331,7 @@ def _process_chunk_whisper(chunk, cfg, backend):
         backend.raw_responses.clear()
 
     if cfg.whisper.strategy == "vad_segments":
-        whisper_segments = transcribe_by_vad_segments(
+        whisper_segments = transcribe_vad_segments(
             audio, vad_segments, backend, cfg.whisper
         )
     else:

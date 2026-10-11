@@ -13,9 +13,9 @@ backend the model stays loaded, so the per-call overhead is minimal.
 
 import logging
 import tempfile
-from pathlib import Path
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 from whisper_subtitle.config import WhisperConfig
 from whisper_subtitle.exceptions import PipelineError

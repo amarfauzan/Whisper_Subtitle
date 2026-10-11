@@ -42,11 +42,19 @@ def merge_whisper_ocr(
 ) -> list[Subtitle]:
     """Combine whisper subtitles and OCR events into one list.
 
-    Whisper always provides the cue text and timing. OCR events that
-    overlap a whisper cue are attached as `source_hint` so the
-    translation prompt can see both readings. OCR events that do not
-    overlap any whisper cue become gap-fills (own text, own timing),
-    if fill_gaps is enabled.
+    Whisper provides the dialogue and its timing. OCR is used three ways:
+
+      - OCR reading that matches the overlapping whisper cue (similarity
+        >= `unrelated_threshold`) -> attached as `source_hint` when the
+        readings differ, so translation sees both.
+      - OCR text that overlaps speech but says something different ->
+        that is on-screen information (venue notices, product/place
+        cards), not dialogue. It is kept as its own cue instead of being
+        thrown away, when `keep_unrelated_ocr` is set.
+      - OCR text in a speech gap -> gap-fill, if `fill_gaps` is enabled.
+
+    Effect text (short bracketed captions, laughter/punctuation) and
+    near-duplicates of a neighbouring cue are dropped.
 
     Args:
         whisper_subs: subtitles from the whisper path, on the global timeline.
@@ -55,7 +63,8 @@ def merge_whisper_ocr(
 
     Returns:
         Combined subtitles, sorted by start time. Whisper entries may
-        carry a `source_hint` when OCR overlapped them.
+        carry a `source_hint` when OCR overlapped them; OCR entries may
+        overlap a whisper cue on purpose (on-screen text).
     """
     if not whisper_subs and not ocr_events:
         return []
@@ -88,18 +97,41 @@ def merge_whisper_ocr(
         for i, ev in enumerate(ocr_events):
             if i in claimed:
                 continue
-            if _overlaps_any_whisper(ev, whisper_subs, cfg.overlap_threshold):
-                continue
             if ev.duration < cfg.gap_fill_min_duration:
                 continue
+
+            # An OCR reading that matches the speech it overlaps is the
+            # same dialogue (it just lost the claim contest).
+            overlap_sim = _best_overlap_similarity(
+                ev, whisper_subs, cfg.overlap_threshold
+            )
+            # Burn-in captions can lag or lead the audio: also reject a
+            # re-timed reading of neighbouring speech.
+            if _adjacent_speech_similarity(ev, whisper_subs) >= _ADJACENT_SIMILARITY:
+                continue
+
+            if overlap_sim is not None:
+                if not cfg.keep_unrelated_ocr:
+                    continue
+                if overlap_sim >= cfg.unrelated_threshold:
+                    continue
+                # Speech is playing, so only genuine on-screen
+                # information survives; short fragments are caption noise.
+                if not _looks_like_information(ev.text, cfg.info_min_chars):
+                    continue
+            elif not _looks_like_info_text(ev.text):
+                continue
+
             text = cfg.gap_fill_prefix + ev.text if cfg.gap_fill_prefix else ev.text
+            if _is_redundant(text, merged, ev.start):
+                continue
             merged.append(Subtitle(start=ev.start, end=ev.end, text=text))
 
     merged.sort(key=lambda s: s.start)
 
     log.info(
         "Merged %d whisper + %d OCR events -> %d subtitles "
-        "(%d OCR as hints, %d OCR as gap-fills)",
+        "(%d hints, %d on-screen text cues)",
         len(whisper_subs),
         len(ocr_events),
         len(merged),
@@ -107,6 +139,87 @@ def merge_whisper_ocr(
         len(merged) - len(whisper_subs),
     )
     return merged
+
+
+# Effect text: laughter runs, punctuation-only, and short bracketed
+# captions like "((소스발견))" that are decoration, not information.
+_EFFECT_ONLY_RE = re.compile(r"^[\s~!?.,…ㅋㅎㅠㅜ\(\)\[\]\{\}]+$")
+_WRAPPED_RE = re.compile(r"^[\(\[]\s*(.*?)\s*[\)\]]$", re.DOTALL)
+
+# How close (in seconds) an OCR event must be to speech before we treat it
+# as a possible reading of that speech rather than a gap-fill.
+_ADJACENT_WINDOW_SECONDS = 1.5
+# Similarity at which adjacent speech counts as the same utterance.
+_ADJACENT_SIMILARITY = 0.5
+# Text similarity at which two nearby cues are treated as duplicates.
+_DUPLICATE_SIMILARITY = 0.8
+# How far apart two OCR cues may be and still count as duplicates.
+_DUPLICATE_WINDOW_SECONDS = 5.0
+
+
+def _looks_like_information(text: str, min_chars: int) -> bool:
+    """True when OCR text next to speech looks like real on-screen info.
+
+    Dialogue captions appear as short unspaced fragments next to the
+    speech they transcribe, so require either a full line of text or a
+    digit (prices, dates, counts, channel numbers).
+    """
+    if not _looks_like_info_text(text):
+        return False
+    if re.search(r"[0-9]", text):
+        return True
+    return len(_normalize(text)) >= min_chars
+
+
+def _adjacent_speech_similarity(
+    ev: OcrEvent,
+    whisper_subs: list[Subtitle],
+) -> float:
+    """Best similarity to speech starting/ending just before or after."""
+    best = 0.0
+    for sub in whisper_subs:
+        gap = max(sub.start - ev.end, ev.start - sub.end, 0.0)
+        if gap > _ADJACENT_WINDOW_SECONDS:
+            continue
+        best = max(best, _best_similarity(sub.text, ev.text))
+    return best
+
+
+def _looks_like_info_text(text: str) -> bool:
+    """True when OCR text looks like on-screen information worth keeping."""
+    stripped = text.strip()
+    if len(_normalize(stripped)) < 2:
+        return False
+    if _EFFECT_ONLY_RE.fullmatch(stripped):
+        return False
+    wrapped = _WRAPPED_RE.fullmatch(stripped)
+    return not (wrapped and len(_normalize(wrapped.group(1))) < 8)
+
+
+def _is_redundant(text: str, existing: list[Subtitle], start: float) -> bool:
+    """True when an OCR cue repeats text already emitted near this time.
+
+    Catches exact repeats, fragments already covered by a neighbouring
+    cue, incremental captions (a cue that extends an earlier one), and
+    near-identical re-readings.
+    """
+    key = _normalize(text)
+    for sub in existing:
+        if abs(sub.start - start) > _DUPLICATE_WINDOW_SECONDS:
+            continue
+        other = _normalize(sub.text)
+        if not other:
+            continue
+        if key == other:
+            return True
+        if len(key) >= 4 and key in other:
+            return True
+        if len(other) >= 4 and other in key:
+            # Incremental caption: this cue just grows the previous one.
+            return True
+        if _similarity(text, sub.text) >= _DUPLICATE_SIMILARITY:
+            return True
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -122,6 +235,11 @@ def _find_best_ocr_match(
 ) -> tuple[int | None, float]:
     """Find the OCR event that best matches this whisper subtitle.
 
+    Only OCR readings similar enough to be the *same speech* qualify
+    (similarity >= `unrelated_threshold`). Anything less similar is
+    on-screen information rather than a reading of this cue, so it is
+    left unclaimed for the on-screen-text path.
+
     Prefers higher time overlap; ties broken by higher text similarity.
     Returns (index, similarity) or (None, 0.0) if nothing qualifies.
     """
@@ -136,6 +254,8 @@ def _find_best_ocr_match(
         if overlap < cfg.overlap_threshold:
             continue
         similarity = _best_similarity(sub.text, ev.text)
+        if similarity < cfg.unrelated_threshold:
+            continue
         if overlap > best_overlap or (
             overlap == best_overlap and similarity > best_similarity
         ):
@@ -148,15 +268,23 @@ def _find_best_ocr_match(
     return best_idx, best_similarity
 
 
-def _overlaps_any_whisper(
+def _best_overlap_similarity(
     ev: OcrEvent,
     whisper_subs: list[Subtitle],
     threshold: float,
-) -> bool:
+) -> float | None:
+    """Best text similarity to any whisper cue this OCR event overlaps.
+
+    Returns None when the event overlaps no whisper cue at all.
+    """
+    best: float | None = None
     for sub in whisper_subs:
-        if _overlap_ratio(sub.start, sub.end, ev.start, ev.end) >= threshold:
-            return True
-    return False
+        if _overlap_ratio(sub.start, sub.end, ev.start, ev.end) < threshold:
+            continue
+        similarity = _best_similarity(sub.text, ev.text)
+        if best is None or similarity > best:
+            best = similarity
+    return best
 
 
 def _overlap_ratio(
@@ -218,14 +346,17 @@ def _ocr_events_to_subtitles(
     events: list[OcrEvent],
     cfg: MergeConfig,
 ) -> list[Subtitle]:
-    kept = [ev for ev in events if ev.duration >= cfg.gap_fill_min_duration]
+    kept = [
+        ev for ev in events
+        if ev.duration >= cfg.gap_fill_min_duration and _looks_like_info_text(ev.text)
+    ]
     kept.sort(key=lambda e: e.start)
     prefix = cfg.gap_fill_prefix
-    return [
-        Subtitle(
-            start=ev.start,
-            end=ev.end,
-            text=(prefix + ev.text) if prefix else ev.text,
-        )
-        for ev in kept
-    ]
+
+    out: list[Subtitle] = []
+    for ev in kept:
+        text = (prefix + ev.text) if prefix else ev.text
+        if _is_redundant(text, out, ev.start):
+            continue
+        out.append(Subtitle(start=ev.start, end=ev.end, text=text))
+    return out

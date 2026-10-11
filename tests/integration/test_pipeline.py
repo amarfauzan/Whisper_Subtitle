@@ -13,7 +13,6 @@ import pytest
 from whisper_subtitle.config import load_config
 from whisper_subtitle.pipeline import process_video
 
-
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "clip_3s.mp4"
 
 

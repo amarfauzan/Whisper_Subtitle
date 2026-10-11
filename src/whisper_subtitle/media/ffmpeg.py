@@ -20,6 +20,7 @@ def _run(command: list[str], *, description: str) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
     if result.returncode != 0:
         raise FFmpegError(

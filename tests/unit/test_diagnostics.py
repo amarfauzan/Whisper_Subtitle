@@ -1,4 +1,3 @@
-import pytest
 
 from whisper_subtitle.models import WhisperSegment
 from whisper_subtitle.transcription.diagnostics import (

@@ -10,7 +10,6 @@ original V3 text is kept — the pipeline never breaks because of an LLM
 hiccup.
 """
 
-import json
 import logging
 import re
 from dataclasses import replace
@@ -114,16 +113,14 @@ def _adjudicate_batch(
     prompt = _build_prompt(requests)
 
     try:
-        kwargs = dict(
-            model="deepseek-chat",
+        response = client.chat.completions.create(
+            model=cfg.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             timeout=180,
+            # Disable thinking for speed (same as translation)
+            extra_body={"thinking": {"type": "disabled"}},
         )
-        # Disable thinking for speed (same as translation)
-        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-
-        response = client.chat.completions.create(**kwargs)
     except Exception as exc:  # noqa: BLE001 — API errors vary
         log.warning("Adjudication API error: %s", exc)
         return {}

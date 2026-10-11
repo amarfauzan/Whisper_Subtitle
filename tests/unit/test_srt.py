@@ -3,13 +3,11 @@ import pytest
 from whisper_subtitle.models import Subtitle
 from whisper_subtitle.subtitles.srt import (
     ms_to_timestamp,
+    parse_srt,
     render_srt,
     seconds_to_timestamp,
     timestamp_to_ms,
 )
-
-
-from whisper_subtitle.subtitles.srt import parse_srt, render_srt
 
 
 class TestParseSrt:

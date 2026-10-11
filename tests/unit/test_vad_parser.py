@@ -3,7 +3,6 @@ import pytest
 from whisper_subtitle.exceptions import VadError
 from whisper_subtitle.transcription.vad import parse_vad_output
 
-
 SAMPLE_OUTPUT = """\
 whisper_vad_segments_from_probs: found 3 segments
 VAD segment 0: start = 0.48, end = 2.34
@@ -51,11 +50,6 @@ def test_empty_output_raises():
 def test_output_without_segments_raises():
     with pytest.raises(VadError):
         parse_vad_output("whisper_vad_segments_from_probs: found 0 segments\n")
-
-def test_empty_output_raises():
-    # No output at all — VAD produced nothing. This is an error.
-    with pytest.raises(VadError):
-        parse_vad_output("")
 
 
 def test_output_without_completion_line_raises():

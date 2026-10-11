@@ -121,14 +121,14 @@ def merge_ensemble(
         if sim >= cfg.agree_threshold:
             # High agreement — keep V3's text (usually cleaner)
             cues.append(v)
-        elif sim >= cfg.hint_threshold:
-            # Moderate agreement — prefer BAT's text (usually more natural)
-            cues.append(replace(v, text=bat_text))
         else:
-            # Real disagreement — mark for LLM
-            provisional = v  # placeholder; text will be replaced if LLM resolves
+            # Anything the two models don't agree on keeps V3's text as a
+            # provisional reading and goes to the LLM, which sees both
+            # readings plus surrounding context. Blindly swapping in BAT's
+            # text at moderate similarity used to inject BAT's
+            # hallucinations and misread names into the SRT.
             idx = len(cues)
-            cues.append(provisional)
+            cues.append(v)
             pending.append(AdjudicationRequest(
                 index=idx,
                 v3_text=v.text,
@@ -155,9 +155,7 @@ def _is_junk(seg: WhisperSegment, cfg: EnsembleConfig) -> bool:
     if seg.duration >= cfg.min_cue_duration:
         return False
     text = seg.text.strip()
-    if len(text) >= cfg.min_cue_chars:
-        return False
-    return True
+    return len(text) < cfg.min_cue_chars
 
 def _split_bat_across_v3(
     bat_text: str,
@@ -204,7 +202,7 @@ def _find_split_near(text: str, min_pos: int, target: int) -> int:
         target = min_pos + 1
 
     # Search outward from target for a whitespace or punctuation
-    for offset in range(0, n):
+    for offset in range(n):
         for pos in (target + offset, target - offset):
             if pos <= min_pos or pos >= n:
                 continue

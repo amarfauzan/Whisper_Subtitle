@@ -1,8 +1,8 @@
 """Pure SRT timestamp and formatting utilities."""
 
-from whisper_subtitle.models import Subtitle
 import re
 
+from whisper_subtitle.models import Subtitle
 
 _BLOCK_RE = re.compile(r"\n\s*\n")
 

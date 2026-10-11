@@ -1,10 +1,10 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import default_whisper_config
 from whisper_subtitle.config import (
-    EnsembleConfig,
-    VadSegmentsConfig,
     WhisperConfig,
 )
 from whisper_subtitle.exceptions import WhisperError
@@ -15,12 +15,6 @@ from whisper_subtitle.transcription.whisper_backend import (
     make_whisper_backend,
 )
 
-from pathlib import Path
-
-
-
-
-from tests.conftest import default_whisper_config
 
 def make_cfg(**overrides) -> WhisperConfig:
     return default_whisper_config(**overrides)
@@ -71,6 +65,18 @@ class TestParseServerSegments:
         with pytest.raises(WhisperError):
             _parse_server_segments({"segments": [{"end": 1.0, "text": "hi"}]})
 
+    def test_undecodable_characters_stripped(self):
+        payload = {"segments": [
+            {"start": 0.0, "end": 1.0, "text": "국내산 할라\ufffd"},
+            {"start": 1.0, "end": 2.0, "text": "\ufffd뇨가 좋네요"},
+        ]}
+        segs = _parse_server_segments(payload)
+        assert [s.text for s in segs] == ["국내산 할라", "뇨가 좋네요"]
+
+    def test_segment_that_is_only_undecodable_is_dropped(self):
+        payload = {"segments": [{"start": 0.0, "end": 1.0, "text": "\ufffd"}]}
+        assert _parse_server_segments(payload) == []
+
     def test_non_numeric_start_raises(self):
         with pytest.raises(WhisperError):
             _parse_server_segments(
@@ -93,23 +99,28 @@ class TestCliBackend:
 
 
 class TestServerBackend:
+    @patch("whisper_subtitle.transcription.whisper_backend.time.sleep")
+    @patch("whisper_subtitle.transcription.whisper_backend._ensure_port_free")
     @patch("whisper_subtitle.transcription.whisper_backend._wait_for_port")
     @patch("whisper_subtitle.transcription.whisper_backend._start_server")
-    def test_enter_starts_and_waits(self, mock_start, mock_wait):
+    def test_enter_starts_and_waits(self, mock_start, mock_wait, mock_port_free, mock_sleep):
         fake_proc = MagicMock()
+        fake_proc.poll.return_value = None  # child stays alive
         mock_start.return_value = fake_proc
 
         backend = ServerBackend(make_cfg(mode="server"))
         with backend as b:
             assert b is backend
 
+        mock_port_free.assert_called_once_with("127.0.0.1", 8080)
         mock_start.assert_called_once()
         mock_wait.assert_called_once()
         fake_proc.terminate.assert_called_once()
 
+    @patch("whisper_subtitle.transcription.whisper_backend._ensure_port_free")
     @patch("whisper_subtitle.transcription.whisper_backend._wait_for_port")
     @patch("whisper_subtitle.transcription.whisper_backend._start_server")
-    def test_enter_kills_server_on_wait_failure(self, mock_start, mock_wait):
+    def test_enter_kills_server_on_wait_failure(self, mock_start, mock_wait, mock_port_free):
         fake_proc = MagicMock()
         mock_start.return_value = fake_proc
         mock_wait.side_effect = WhisperError("timeout")
@@ -119,3 +130,30 @@ class TestServerBackend:
             backend.__enter__()
 
         fake_proc.kill.assert_called_once()
+
+    @patch("whisper_subtitle.transcription.whisper_backend._ensure_port_free")
+    @patch("whisper_subtitle.transcription.whisper_backend._start_server")
+    def test_enter_refuses_occupied_port(self, mock_start, mock_port_free):
+        mock_port_free.side_effect = WhisperError("port in use")
+
+        backend = ServerBackend(make_cfg(mode="server"))
+        with pytest.raises(WhisperError):
+            backend.__enter__()
+
+        mock_start.assert_not_called()
+
+    @patch("whisper_subtitle.transcription.whisper_backend.time.sleep")
+    @patch("whisper_subtitle.transcription.whisper_backend._ensure_port_free")
+    @patch("whisper_subtitle.transcription.whisper_backend._wait_for_port")
+    @patch("whisper_subtitle.transcription.whisper_backend._start_server")
+    def test_enter_detects_exited_server(self, mock_start, mock_wait, mock_port_free, mock_sleep):
+        fake_proc = MagicMock()
+        fake_proc.poll.return_value = 42  # child died on bind failure
+        mock_start.return_value = fake_proc
+
+        backend = ServerBackend(make_cfg(mode="server"))
+        with pytest.raises(WhisperError, match="already in use"):
+            backend.__enter__()
+
+        fake_proc.kill.assert_called_once()
+        fake_proc.wait.assert_called_once()

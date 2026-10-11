@@ -4,6 +4,7 @@ whisper:
   ensemble:
     enabled: true             # opt-in for now
     secondary_port: 8081
+    model: deepseek-chat
     overlap_threshold: 0.4
     agree_threshold: 0.85
     hint_threshold: 0.5
@@ -37,10 +38,8 @@ whisper:
     min_coverage: 0.9
 
 vad:
-  min_subtitle_duration: 0.5
-  max_subtitle_duration: 7.0
   max_merge_duration: 2.0
-  max_speech_duration: 6.0 
+  max_speech_duration: 6.0
 
 translation:
   base_url: https://api.deepseek.com/v1
@@ -60,27 +59,28 @@ ocr:
   enabled: false
   crop_top_ratio: 0.4
   crop_bottom_ratio: 0.05
-  crop_left_ratio: 0.15
-  crop_right_ratio: 0.15
+  crop_left_ratio: 0.12
+  crop_right_ratio: 0.12
   providers: ["CPUExecutionProvider"]
   sample_fps: 2
   rec_confidence: 0.5
   llm_filter:
-    enabled: false
+    enabled: true
     model: deepseek-chat
     batch_size: 100
     min_events: 5
     source_language: Korean
     content_type: variety show
   filter:
-    min_duration: 0.5
+    min_duration: 0.0       # at 2 fps a fast caption is a single frame (duration 0)
     max_duration: 8.0
     min_box_height_ratio: 0.02
     max_box_height_ratio: 1.00
     min_text_length: 2
-    min_confidence: 0.84
+    min_confidence: 0.80
     timestamp_padding: 0.25
-    max_text_repeats: 8
+    max_text_repeats: 2     # drop texts seen 3+ times — but only if persistent
+    repeat_span_seconds: 20.0
     blocklist_texts: []
     blocklist_patterns:
       - "^[!?.…\\s\\(\\)\\[\\]\\{\\}]+$"
@@ -91,11 +91,17 @@ ocr:
 merge:
   overlap_threshold: 0.3
   agree_threshold: 0.9
-  hint_threshold: 0.5
   fill_gaps: true
   gap_fill_min_duration: 0.5
   gap_fill_prefix: ""
-  parallel: true
+  keep_unrelated_ocr: true   # keep on-screen info cards that overlap speech
+  unrelated_threshold: 0.3   # below this similarity = different content
+  info_min_chars: 20         # on-screen info must be a full line, or contain a digit
+
+subtitles:
+  max_chars_per_cue: 40      # split longer cues at sentence/word boundaries
+  max_cue_duration: 6.0
+  min_cue_duration: 0.5
 
 uvr:
   enabled: false

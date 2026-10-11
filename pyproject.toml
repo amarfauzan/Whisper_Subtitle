@@ -1,7 +1,7 @@
 [project]
 name = "whisper-subtitle"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generate subtitles from video using Whisper transcription, PaddleOCR, and optional DeepSeek translation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -34,5 +34,14 @@ dev = [
     "ruff>=0.16.7",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/whisper_subtitle"]
+[tool.ruff.lint.per-file-ignores]
+# Test helpers idiomatically build a base dict and .update() overrides,
+# which ruff's C408 flags. Allow it in tests only.
+"tests/**" = ["C408"]
+
+[tool.mypy]
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["yaml", "audio_separator.*", "onnxruntime.*"]
+ignore_missing_imports = true

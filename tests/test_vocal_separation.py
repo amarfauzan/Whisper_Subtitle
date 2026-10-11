@@ -1,6 +1,5 @@
 """Tests for the vocal separation module."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -81,6 +80,5 @@ def test_separator_failure_raises(tmp_path):
     with patch(
         "whisper_subtitle.media.vocal_separation.Separator",
         return_value=mock_separator,
-    ):
-        with pytest.raises(PipelineError, match="separation failed"):
-            separate_vocals(audio, make_cfg())
+    ), pytest.raises(PipelineError, match="separation failed"):
+        separate_vocals(audio, make_cfg())

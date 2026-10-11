@@ -1,19 +1,17 @@
 """Tests for the ensemble merge module."""
 
-from dataclasses import replace
 
 import pytest
 
 from whisper_subtitle.config import EnsembleConfig
-from whisper_subtitle.models import VadSegment, WhisperSegment
+from whisper_subtitle.models import WhisperSegment
 from whisper_subtitle.transcription.ensemble import (
     _is_junk,
     _overlap,
     _similarity,
-    merge_ensemble,
     _split_bat_across_v3,
+    merge_ensemble,
 )
-
 
 
 def ws(start: float, end: float, text: str) -> WhisperSegment:
@@ -144,23 +142,26 @@ class TestAgreement:
 
 
 class TestModerateAgreement:
-    def test_hint_range_uses_bat_text(self):
-        # Similarity between agree (0.85) and hint (0.5) → use BAT
+    def test_moderate_similarity_keeps_v3_text_and_asks_llm(self):
+        # Similarity between hint (0.5) and agree (0.85): keep large-v3's
+        # reading as provisional text and let the LLM arbitrate, instead of
+        # blindly swapping in the weaker model's text.
         bat = [ws(1.0, 3.0, "안녕하세요 반갑습니다")]
         v3 = [ws(1.0, 3.0, "안녕하세여 반가워요")]
         result = merge_ensemble(bat, v3, cfg())
         assert len(result.cues) == 1
-        assert result.cues[0].text == "안녕하세요 반갑습니다"
-        assert result.pending == []
+        assert result.cues[0].text == "안녕하세여 반가워요"
+        assert len(result.pending) == 1
+        assert result.pending[0].bat_text == "안녕하세요 반갑습니다"
 
     def test_uses_v3_timing(self):
         bat = [ws(10.0, 20.0, "안녕하세요 반갑습니다")]
         v3 = [ws(10.0, 13.0, "안녕하세여 반가워요")]
         result = merge_ensemble(bat, v3, cfg())
-        # V3 timing preserved, BAT text used
+        # V3 timing and V3 text both preserved
         assert result.cues[0].start == 10.0
         assert result.cues[0].end == 13.0
-        assert result.cues[0].text == "안녕하세요 반갑습니다"
+        assert result.cues[0].text == "안녕하세여 반가워요"
 
 
 class TestDisagreement:
@@ -268,7 +269,7 @@ class TestMultipleMixed:
     def test_mixed_agree_hint_disagree(self):
         bat = [
             ws(0.0, 1.0, "same"),                # agree with v3
-            ws(1.0, 3.0, "안녕하세요 반갑습니다"),  # hint range
+            ws(1.0, 3.0, "안녕하세요 반갑습니다"),  # moderate agreement
             ws(4.0, 6.0, "안녕"),                  # disagree
         ]
         v3 = [
@@ -278,8 +279,9 @@ class TestMultipleMixed:
         ]
         result = merge_ensemble(bat, v3, cfg())
         assert len(result.cues) == 3
-        assert len(result.pending) == 1
-        assert result.pending[0].index == 2
+        # Agreed cue needs no adjudication; the other two do.
+        assert len(result.pending) == 2
+        assert [p.index for p in result.pending] == [1, 2]
 
 class TestSplitBatAcrossV3:
     def test_single_v3_cue(self):
@@ -335,37 +337,3 @@ class TestMultiV3Assignment:
         assert len(result.cues) == 3
         # All three should contain text (no empty cues)
         assert all(c.text.strip() for c in result.cues)
-
-from whisper_subtitle.transcription.ensemble_pipeline import _clip_to_vad
-
-
-class TestClipToVad:
-    def test_single_vad_clip(self):
-        cues = [WhisperSegment(1.0, 5.0, "text")]  # spans wider than VAD
-        vads = [VadSegment(0, 2.0, 4.0)]
-        result = _clip_to_vad(cues, vads)
-        assert len(result) == 1
-        assert result[0].start == 2.0
-        assert result[0].end == 4.0
-
-    def test_inside_vad_unchanged(self):
-        cues = [WhisperSegment(2.5, 3.5, "text")]
-        vads = [VadSegment(0, 2.0, 4.0)]
-        result = _clip_to_vad(cues, vads)
-        assert result[0].start == 2.5
-        assert result[0].end == 3.5
-
-    def test_no_vad_overlap_dropped(self):
-        cues = [WhisperSegment(5.0, 6.0, "hallucination")]
-        vads = [VadSegment(0, 1.0, 2.0)]
-        assert _clip_to_vad(cues, vads) == []
-
-    def test_cue_spanning_two_vads(self):
-        # Cue spans a silence gap between two VAD segments
-        cues = [WhisperSegment(1.0, 5.0, "long")]
-        vads = [VadSegment(0, 0.5, 2.0), VadSegment(1, 4.0, 6.0)]
-        result = _clip_to_vad(cues, vads)
-        assert len(result) == 1
-        # Clipped to the union: 0.5 to 6.0, intersected with cue's 1.0-5.0
-        assert result[0].start == 1.0
-        assert result[0].end == 5.0

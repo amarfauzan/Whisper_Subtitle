@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from whisper_subtitle.models import OcrEvent, WhisperSegment
 from whisper_subtitle.persistence import (

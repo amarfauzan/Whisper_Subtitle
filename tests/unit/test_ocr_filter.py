@@ -13,7 +13,6 @@ from whisper_subtitle.ocr.filter import (
     pad_event_timestamps,
 )
 
-
 FRAME_H = 1080  # 1080p reference for box-height ratio math
 
 
@@ -42,9 +41,9 @@ def make_cfg(**overrides) -> OcrFilterConfig:
         max_duration=8.0,
         min_box_height_ratio=0.02,   # 21.6 px on 1080
         max_box_height_ratio=0.15,   # 162 px on 1080
-        timestamp_padding=0.25,       # ← add th
+        timestamp_padding=0.25,
         min_text_length=2,
-        max_text_repeats=8,  
+        max_text_repeats=8,
         min_confidence=0.75,
         blocklist_texts=(),
         blocklist_patterns=("^[!?.…\\s\\(\\)\\[\\]\\{\\}]+$", "^[0-9\\s]+$"),
@@ -118,7 +117,6 @@ class TestDuration:
         assert filter_events(events, make_cfg(), frame_height=FRAME_H) == []
 
 
-from whisper_subtitle.ocr.filter import pad_event_timestamps
 
 
 class TestPadEventTimestamps:
@@ -429,30 +427,65 @@ from whisper_subtitle.ocr.filter import find_repeated_texts
 
 class TestFindRepeatedTexts:
     def test_empty(self):
-        assert find_repeated_texts([], 8) == set()
+        assert find_repeated_texts([], 2) == set()
 
     def test_none_over_threshold(self):
         events = [make_event(text="a") for _ in range(3)]
         assert find_repeated_texts(events, 8) == set()
 
-    def test_over_threshold(self):
-        events = [make_event(text="repeat") for _ in range(10)]
-        result = find_repeated_texts(events, 8)
-        assert result == {"repeat"}
+    def test_at_or_below_max_not_flagged(self):
+        events = [make_event(text="x") for _ in range(2)]
+        assert find_repeated_texts(events, 2) == set()
 
-    def test_at_threshold_not_flagged(self):
-        events = [make_event(text="x") for _ in range(8)]
-        assert find_repeated_texts(events, 8) == set()
+    def test_persistent_repeat_flagged(self):
+        # 3 occurrences spread over a minute: a watermark/nametag that
+        # keeps coming back — flagged even though each burst is small.
+        events = [
+            make_event(start=0.0, text="logo"),
+            make_event(start=30.0, text="logo"),
+            make_event(start=60.0, text="logo"),
+        ]
+        assert find_repeated_texts(events, 2) == {"logo"}
 
-    def test_multiple_texts(self):
-        events = (
-            [make_event(text="a") for _ in range(10)]
-            + [make_event(text="b") for _ in range(3)]
-            + [make_event(text="c") for _ in range(12)]
-        )
-        result = find_repeated_texts(events, 8)
-        assert result == {"a", "c"}
+    def test_burst_repeat_not_flagged(self):
+        # Real dialogue: the same phrase shown 4 times within a few
+        # seconds while the speaker repeats it — kept.
+        events = [
+            make_event(start=10.0 + i * 1.0, text="폴라로이드")
+            for i in range(4)
+        ]
+        assert find_repeated_texts(events, 2) == set()
+
+    def test_flickering_nametag_flagged(self):
+        # A nametag flickering on and off: 6+ occurrences in a tight
+        # burst trips the burst cap even without a long span.
+        events = [
+            make_event(start=10.0 + i * 1.5, text="강수경")
+            for i in range(7)
+        ]
+        assert find_repeated_texts(events, 2) == {"강수경"}
+
+    def test_span_boundary_uses_threshold(self):
+        # Exactly at the span threshold counts as persistent.
+        events = [
+            make_event(start=0.0, text="a"),
+            make_event(start=10.0, text="a"),
+            make_event(start=20.0, text="a"),
+        ]
+        assert find_repeated_texts(events, 2, repeat_span_seconds=20.0) == {"a"}
+
+    def test_normalization_buckets_together(self):
+        events = [
+            make_event(start=0.0, text="MINAMI"),
+            make_event(start=30.0, text=" minami "),
+            make_event(start=60.0, text="Minami"),
+        ]
+        assert find_repeated_texts(events, 2) == {"minami"}
 
     def test_zero_disables(self):
         events = [make_event(text="x") for _ in range(100)]
         assert find_repeated_texts(events, 0) == set()
+
+    def test_negative_disables(self):
+        events = [make_event(text="x") for _ in range(100)]
+        assert find_repeated_texts(events, -1) == set()

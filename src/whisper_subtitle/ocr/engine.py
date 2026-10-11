@@ -103,8 +103,8 @@ class PaddleOcrEngine:
     def _prepare_det_input(self, img: np.ndarray) -> tuple[np.ndarray, float, float]:
         h, w = img.shape[:2]
         scale = min(1.0, self.max_side / max(h, w))
-        new_w = int(round(w * scale))
-        new_h = int(round(h * scale))
+        new_w = round(w * scale)
+        new_h = round(h * scale)
         new_w = max(self.stride, (new_w + self.stride - 1) // self.stride * self.stride)
         new_h = max(self.stride, (new_h + self.stride - 1) // self.stride * self.stride)
         resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
@@ -239,7 +239,7 @@ class PaddleOcrEngine:
 
             try:
                 probs = self._run_recognition(crop)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — ONNX errors vary by provider
                 log.debug("Recognition failed on box %s: %s", (x1, y1, x2, y2), exc)
                 continue
 

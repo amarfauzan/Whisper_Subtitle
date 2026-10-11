@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from whisper_subtitle.config import EnsembleConfig
 from whisper_subtitle.models import WhisperSegment
 from whisper_subtitle.transcription.ensemble import AdjudicationRequest

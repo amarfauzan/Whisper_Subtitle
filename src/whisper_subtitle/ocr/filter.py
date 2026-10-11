@@ -8,9 +8,9 @@ Rules are applied in order from cheapest to most expensive. Every drop
 is categorized so the log can show a summary that helps tuning.
 """
 
-from dataclasses import replace
 import logging
 import re
+from dataclasses import replace
 
 from whisper_subtitle.config import OcrFilterConfig
 from whisper_subtitle.models import OcrEvent, Subtitle
@@ -116,10 +116,10 @@ def _reject_reason(
     if ev.confidence < cfg.min_confidence:
         return "low_confidence"
 
-    # if ev.duration < cfg.min_duration:
-    #     return "too_short"
-    # if ev.duration > cfg.max_duration:
-    #     return "too_long"
+    if ev.duration < cfg.min_duration:
+        return "too_short"
+    if ev.duration > cfg.max_duration:
+        return "too_long"
 
     box_h = ev.box[3] - ev.box[1]
     ratio = box_h / frame_height
@@ -161,12 +161,12 @@ def filter_repeated_texts(
 
     counts: dict[str, int] = {}
     for ev in events:
-        key = _normalize_for_repeat(ev.text)
+        key = normalize_repeat_text(ev.text)
         counts[key] = counts.get(key, 0) + 1
 
     kept: list[OcrEvent] = []
     for ev in events:
-        key = _normalize_for_repeat(ev.text)
+        key = normalize_repeat_text(ev.text)
         if counts[key] > max_repeats:
             log.debug("Repeat filter dropped: %r", ev.text)
         else:
@@ -184,8 +184,25 @@ def filter_repeated_texts(
 def find_repeated_texts(
     events: list[OcrEvent],
     max_repeats: int,
+    repeat_span_seconds: float = 20.0,
 ) -> set[str]:
-    """Return the set of texts that appear more than max_repeats times.
+    """Return the set of normalized texts that repeat *persistently*.
+
+    A text is flagged when it appears more than max_repeats times AND it
+    looks like a watermark/nametag rather than real dialogue:
+
+      - its occurrences span at least repeat_span_seconds (the text keeps
+        coming back across the video — logos, nametags, channel UI), or
+      - it appears at least max(3 * max_repeats, 6) times in a tight burst
+        (a nametag flickering on and off during a segment).
+
+    Real dialogue repeats in short bursts (a phrase shown 2-3 times over a
+    few seconds while the speaker repeats it) and is therefore kept, which
+    pure count-based filtering got wrong.
+
+    Keys are normalized (case-folded, whitespace-stripped) so variants of
+    the same on-screen text count together. Callers must normalize text
+    with normalize_repeat_text() before testing membership.
 
     Used as a pre-filter in the double-grouper OCR pipeline. The caller
     drops all raw detections whose text is in this set, then runs the
@@ -197,12 +214,22 @@ def find_repeated_texts(
     if max_repeats <= 0:
         return set()
 
-    counts: dict[str, int] = {}
+    times: dict[str, list[float]] = {}
     for ev in events:
-        counts[ev.text] = counts.get(ev.text, 0) + 1
+        key = normalize_repeat_text(ev.text)
+        times.setdefault(key, []).append(ev.start)
 
-    return {t for t, c in counts.items() if c > max_repeats}
+    burst_cap = max(3 * max_repeats, 6)
+    flagged: set[str] = set()
+    for key, starts in times.items():
+        count = len(starts)
+        if count <= max_repeats:
+            continue
+        span = max(starts) - min(starts)
+        if span >= repeat_span_seconds or count >= burst_cap:
+            flagged.add(key)
+    return flagged
 
-def _normalize_for_repeat(text: str) -> str:
+def normalize_repeat_text(text: str) -> str:
     """Lowercase and strip whitespace. Matches the grouper's normalization."""
     return re.sub(r"\s+", "", text.lower())

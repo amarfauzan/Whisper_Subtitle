@@ -77,6 +77,7 @@ def run_vad(audio_path: Path, cfg: VadConfig) -> list[VadSegment]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
 
     # whisper-vad-speech-segments writes segment info to stderr.

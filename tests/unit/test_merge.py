@@ -1,6 +1,5 @@
 """Tests for the whisper + OCR merge."""
 
-import pytest
 
 from whisper_subtitle.config import MergeConfig
 from whisper_subtitle.models import OcrEvent, Subtitle
@@ -26,11 +25,9 @@ def cfg(**overrides) -> MergeConfig:
     base = dict(
         overlap_threshold=0.3,
         agree_threshold=0.9,
-        hint_threshold=0.5,
         fill_gaps=True,
         gap_fill_min_duration=0.5,
         gap_fill_prefix="",
-        parallel=True,          # ← add this line
     )
     base.update(overrides)
     return MergeConfig(**base)
@@ -155,24 +152,53 @@ class TestModerateSimilarity:
 
 
 class TestDifferentContent:
-    def test_whisper_wins_text(self):
-        """Whisper text wins, but OCR is attached as hint under new policy."""
+    def test_unrelated_onscreen_text_kept_as_its_own_cue(self):
+        """OCR that says something different while speech plays is on-screen
+        information — keep it instead of discarding it."""
+        result = merge_whisper_ocr(
+            [ws(1.0, 3.0, "안녕하세요")],
+            [ocr(1.0, 3.0, "오늘 입장료 5천원")],
+            cfg(),
+        )
+        assert len(result) == 2
+        assert result[0].text == "안녕하세요"
+        assert result[0].source_hint is None
+        assert result[1].text == "오늘 입장료 5천원"
+
+    def test_short_fragment_next_to_speech_dropped(self):
+        # Short caption fragments next to speech are dialogue noise.
         result = merge_whisper_ocr(
             [ws(1.0, 3.0, "안녕하세요")],
             [ocr(1.0, 3.0, "TOKYO")],
             cfg(),
         )
-        assert len(result) == 1
-        assert result[0].text == "안녕하세요"
-        assert result[0].source_hint == "TOKYO"
+        assert [s.text for s in result] == ["안녕하세요"]
 
-    def test_different_content_still_blocks_gap_fill(self):
+    def test_unrelated_onscreen_text_can_be_disabled(self):
         result = merge_whisper_ocr(
             [ws(1.0, 3.0, "안녕하세요")],
-            [ocr(1.0, 3.0, "TOKYO")],
-            cfg(fill_gaps=True),
+            [ocr(1.0, 3.0, "오늘 입장료 5천원")],
+            cfg(keep_unrelated_ocr=False),
         )
-        assert len(result) == 1  # OCR event consumed as hint, no gap-fill
+        assert [s.text for s in result] == ["안녕하세요"]
+
+    def test_effect_text_dropped(self):
+        # Short bracketed captions are decoration, not information.
+        result = merge_whisper_ocr(
+            [ws(1.0, 3.0, "안녕하세요")],
+            [ocr(1.0, 3.0, "((소스발견))")],
+            cfg(),
+        )
+        assert [s.text for s in result] == ["안녕하세요"]
+
+    def test_redundant_onscreen_text_dropped(self):
+        # OCR fragment already covered by a nearby cue is not repeated.
+        result = merge_whisper_ocr(
+            [ws(1.0, 3.0, "누구보다재밌게놀고있었어")],
+            [ocr(3.2, 4.0, "놀고있었어")],
+            cfg(),
+        )
+        assert [s.text for s in result] == ["누구보다재밌게놀고있었어"]
 
 
 class TestGapFill:

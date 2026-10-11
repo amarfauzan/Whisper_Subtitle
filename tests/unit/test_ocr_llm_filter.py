@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from whisper_subtitle.config import LlmFilterConfig
 from whisper_subtitle.models import OcrEvent
 from whisper_subtitle.ocr.llm_filter import (

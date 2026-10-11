@@ -1,6 +1,5 @@
 import os
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -30,6 +29,7 @@ class EnsembleConfig:
     min_cue_chars: int
     llm_adjudicate: bool
     llm_batch_size: int
+    model: str = "deepseek-chat"
 
 @dataclass(frozen=True)
 class UvrConfig:
@@ -43,7 +43,7 @@ class DiagnosticsConfig:
     enabled: bool
     abort_on_loop: bool
     save_intermediates: bool
-    save_raw_whisper: bool    # ← new
+    save_raw_whisper: bool = False
 
 @dataclass(frozen=True)
 class WhisperConfig:
@@ -99,33 +99,11 @@ class OcrFilterConfig:
     max_box_height_ratio: float
     min_text_length: int
     min_confidence: float
-    max_text_repeats: int 
-    timestamp_padding: float         
+    max_text_repeats: int
+    timestamp_padding: float
     blocklist_texts: tuple[str, ...]
     blocklist_patterns: tuple[str, ...]
-
-@dataclass(frozen=True)
-class LlmFilterConfig:
-    enabled: bool
-    model: str
-    batch_size: int
-    min_events: int
-
-@dataclass(frozen=True)
-class OcrConfig:
-    enabled: bool
-    det_model: Path
-    rec_model: Path
-    dict_file: Path
-    providers: tuple[str, ...]
-    sample_fps: int
-    rec_confidence: float
-    llm_filter: LlmFilterConfig 
-    crop_top_ratio: float
-    crop_bottom_ratio: float
-    crop_left_ratio: float
-    crop_right_ratio: float
-    filter: OcrFilterConfig
+    repeat_span_seconds: float = 20.0
 
 @dataclass(frozen=True)
 class LlmFilterConfig:
@@ -137,15 +115,40 @@ class LlmFilterConfig:
     content_type: str
 
 @dataclass(frozen=True)
+class OcrConfig:
+    enabled: bool
+    det_model: Path
+    rec_model: Path
+    dict_file: Path
+    providers: tuple[str, ...]
+    sample_fps: int
+    rec_confidence: float
+    llm_filter: LlmFilterConfig
+    crop_top_ratio: float
+    crop_bottom_ratio: float
+    crop_left_ratio: float
+    crop_right_ratio: float
+    filter: OcrFilterConfig
+
+@dataclass(frozen=True)
 class MergeConfig:
     overlap_threshold: float
     agree_threshold: float
-    hint_threshold: float
     fill_gaps: bool
     gap_fill_min_duration: float
     gap_fill_prefix: str
-    parallel: bool         
+    keep_unrelated_ocr: bool = True
+    unrelated_threshold: float = 0.3
+    info_min_chars: int = 20
 
+
+@dataclass(frozen=True)
+class SubtitleConfig:
+    """Final-SRT shaping: split over-long cues into readable ones."""
+
+    max_chars_per_cue: int = 40
+    max_cue_duration: float = 6.0
+    min_cue_duration: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -158,21 +161,44 @@ class Config:
     ocr: OcrConfig
     merge: MergeConfig
     uvr: UvrConfig
+    subtitles: SubtitleConfig = SubtitleConfig()
 
 
+
+
+def _env_path(name: str) -> Path:
+    """Read a required .env variable and return it as a Path.
+
+    Raises PipelineError (instead of a bare KeyError) when the variable
+    is missing or empty, so the CLI can report a clean message.
+    """
+    value = os.environ.get(name, "")
+    if not value.strip():
+        raise PipelineError(
+            f"Missing environment variable {name}. "
+            f"Check that .env exists and defines it."
+        )
+    return Path(value)
 
 
 def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
     load_dotenv()
-    raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise PipelineError(f"Config file not found: {yaml_path}") from exc
+    except yaml.YAMLError as exc:
+        raise PipelineError(f"Invalid YAML in {yaml_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise PipelineError(f"Config file {yaml_path} must contain a YAML mapping")
     return Config(
         chunk_length_seconds=raw["chunk_length_seconds"],
         whisper=WhisperConfig(
             mode=raw["whisper"].get("mode", "cli"),
-            cli=Path(os.environ["WHISPER_CLI"]),
-            server_exe=Path(os.environ["WHISPER_SERVER"]),
-            model=Path(os.environ["WHISPER_MODEL"]),
-            vad_model=Path(os.environ["VAD_MODEL"]),
+            cli=_env_path("WHISPER_CLI"),
+            server_exe=_env_path("WHISPER_SERVER"),
+            model=_env_path("WHISPER_MODEL"),
+            vad_model=_env_path("VAD_MODEL"),
             language=raw["whisper"]["language"],
             beam_size=raw["whisper"]["beam_size"],
             best_of=raw["whisper"]["best_of"],
@@ -200,8 +226,8 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             ),
         ),
         vad=VadConfig(
-            exe=Path(os.environ["VAD_EXE"]),
-            model=Path(os.environ["VAD_MODEL"]),
+            exe=_env_path("VAD_EXE"),
+            model=_env_path("VAD_MODEL"),
             max_merge_duration=raw["vad"]["max_merge_duration"],
             max_speech_duration=raw["vad"].get("max_speech_duration", 6.0),  # ← new
         ),
@@ -230,11 +256,17 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
         merge=MergeConfig(
             overlap_threshold=raw["merge"]["overlap_threshold"],
             agree_threshold=raw["merge"]["agree_threshold"],
-            hint_threshold=raw["merge"]["hint_threshold"],
             fill_gaps=raw["merge"]["fill_gaps"],
             gap_fill_min_duration=raw["merge"]["gap_fill_min_duration"],
             gap_fill_prefix=raw["merge"].get("gap_fill_prefix", ""),
-            parallel=raw["merge"].get("parallel", True),    # ← new
+            keep_unrelated_ocr=raw["merge"].get("keep_unrelated_ocr", True),
+            unrelated_threshold=raw["merge"].get("unrelated_threshold", 0.3),
+            info_min_chars=raw["merge"].get("info_min_chars", 20),
+        ),
+        subtitles=SubtitleConfig(
+            max_chars_per_cue=raw.get("subtitles", {}).get("max_chars_per_cue", 40),
+            max_cue_duration=raw.get("subtitles", {}).get("max_cue_duration", 6.0),
+            min_cue_duration=raw.get("subtitles", {}).get("min_cue_duration", 0.5),
         ),
     )
 
@@ -272,9 +304,9 @@ def with_mode(cfg: Config, mode: str) -> Config:
 def _load_ocr_config(raw: dict) -> OcrConfig:
     return OcrConfig(
         enabled=raw.get("enabled", False),
-        det_model=Path(os.environ["OCR_DET_MODEL"]),
-        rec_model=Path(os.environ["OCR_REC_MODEL"]),
-        dict_file=Path(os.environ["OCR_DICT_FILE"]),
+        det_model=_env_path("OCR_DET_MODEL"),
+        rec_model=_env_path("OCR_REC_MODEL"),
+        dict_file=_env_path("OCR_DICT_FILE"),
         providers=tuple(raw.get("providers", ["CPUExecutionProvider"])),
         sample_fps=raw.get("sample_fps", 3),
         rec_confidence=raw.get("rec_confidence", 0.5),
@@ -301,6 +333,7 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             max_text_repeats=raw["filter"]["max_text_repeats"],   
             blocklist_texts=tuple(raw["filter"].get("blocklist_texts", [])),
             blocklist_patterns=tuple(raw["filter"].get("blocklist_patterns", [])),
+            repeat_span_seconds=raw["filter"].get("repeat_span_seconds", 20.0),
         ),
     )
 
@@ -331,4 +364,5 @@ def _load_ensemble_config(whisper_raw: dict) -> EnsembleConfig:
         min_cue_chars=raw.get("min_cue_chars", 2),
         llm_adjudicate=raw.get("llm_adjudicate", True),
         llm_batch_size=raw.get("llm_batch_size", 50),
+        model=raw.get("model", "deepseek-chat"),
     )

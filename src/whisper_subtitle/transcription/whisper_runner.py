@@ -107,6 +107,7 @@ def run_whisper_cli(audio_path: Path, cfg: WhisperConfig) -> WhisperResult:
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
 
     if result.returncode != 0:

@@ -6,7 +6,6 @@ import pytest
 from whisper_subtitle.exceptions import PipelineError
 from whisper_subtitle.media.audio import extract_clip
 
-
 FRAMERATE = 16000
 
 

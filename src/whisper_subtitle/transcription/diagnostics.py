@@ -3,9 +3,10 @@
 Runs after primary (batisay) transcription to catch hallucination loops
 before we spend time on secondary (large-v3), OCR, merge, and translation.
 
-Hard aborts only on clear hallucination loops (repeated text) or empty
-output. Everything else is a warning — content-specific anomalies that
-may be legitimate (e.g., music segments with no dialogue).
+Hard aborts only on clear hallucination loops (repeated text). Empty
+output is a warning, not an abort — a silent music segment is legitimate.
+Everything else is a warning — content-specific anomalies that may be
+legitimate (e.g., music segments with no dialogue).
 """
 
 import logging
@@ -45,7 +46,7 @@ def diagnose_transcription(
 
     if not segments:
         return DiagnosticResult(
-            verdict="warning",       # was "abort"
+            verdict="warning",
             reason="No segments produced.",
             warnings=["Empty transcription — nothing was produced for this chunk."],
             metrics=metrics,

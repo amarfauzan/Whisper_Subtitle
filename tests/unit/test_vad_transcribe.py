@@ -1,20 +1,15 @@
 """Tests for VAD-segment transcription."""
 
+import wave
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from whisper_subtitle.config import VadSegmentsConfig, WhisperConfig
+from whisper_subtitle.config import WhisperConfig
 from whisper_subtitle.exceptions import PipelineError
 from whisper_subtitle.models import VadSegment, WhisperSegment
-from whisper_subtitle.transcription.vad_transcribe import (
-    _merge_close_segments,
-    _padded_range,
-    transcribe_by_vad_segments,
-)
-
 from whisper_subtitle.transcription.vad_transcribe import (
     _build_batch_clip,
     _coverage_ok,
@@ -22,12 +17,12 @@ from whisper_subtitle.transcription.vad_transcribe import (
     _map_batch_time,
     _map_whisper_segment,
     _MappingEntry,
+    _merge_close_segments,
+    _padded_range,
     transcribe_batched_vad_segments,
+    transcribe_by_vad_segments,
     transcribe_vad_segments,
 )
-
-import wave
-
 
 FRAMERATE = 16000
 
@@ -42,6 +37,7 @@ def make_wav(path: Path, seconds: float) -> None:
         f.writeframes(b"\x00\x00" * frames)
 
 from tests.conftest import default_whisper_config
+
 
 def make_cfg(**overrides) -> WhisperConfig:
     return default_whisper_config(**overrides)

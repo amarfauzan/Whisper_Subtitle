@@ -11,7 +11,6 @@ from whisper_subtitle.translation.translator import (
     _translate_batch,
 )
 
-
 # ---------------------------------------------------------------- helpers
 
 

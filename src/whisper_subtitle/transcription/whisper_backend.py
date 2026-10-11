@@ -10,12 +10,13 @@ Both backends implement the same interface:
   - `backend.transcribe(audio_path) -> WhisperResult`
 """
 
+import json
 import logging
 import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 import requests
 
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 
 
 class WhisperBackend(Protocol):
-    def __enter__(self) -> "WhisperBackend": ...
+    def __enter__(self) -> Self: ...
     def __exit__(self, *args) -> None: ...
     def transcribe(self, audio_path: Path) -> WhisperResult: ...
 
@@ -42,7 +43,7 @@ class CliBackend:
     def __init__(self, cfg: WhisperConfig) -> None:
         self.cfg = cfg
 
-    def __enter__(self) -> "CliBackend":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args) -> None:
@@ -63,7 +64,8 @@ class ServerBackend:
     def transcribe(self, audio_path: Path) -> WhisperResult:
         return _transcribe_via_server(audio_path, self.cfg, self.raw_responses)
 
-    def __enter__(self) -> "ServerBackend":
+    def __enter__(self) -> Self:
+        _ensure_port_free(self.cfg.server_host, self.cfg.server_port)
         self.process = _start_server(self.cfg)
         try:
             _wait_for_port(
@@ -71,6 +73,7 @@ class ServerBackend:
                 self.cfg.server_port,
                 timeout=self.cfg.server_startup_timeout,
             )
+            _ensure_server_alive(self.process, self.cfg)
         except Exception:
             self.process.kill()
             self.process.wait()
@@ -135,6 +138,25 @@ def _start_server(cfg: WhisperConfig) -> subprocess.Popen:
     )
 
 
+def _ensure_port_free(host: str, port: int) -> None:
+    """Fail fast if something is already listening on the server port.
+
+    Without this check, a stale whisper-server (or any other service)
+    on the port makes `_wait_for_port` succeed instantly, and every
+    inference request silently hits the wrong listener.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            pass
+    except OSError:
+        return  # connection refused → port is free
+    raise WhisperError(
+        f"Port {host}:{port} is already in use by another process. "
+        f"Stop that process or change whisper.server_port / "
+        f"whisper.ensemble.secondary_port."
+    )
+
+
 def _wait_for_port(host: str, port: int, timeout: float) -> None:
     """Poll until the TCP port accepts connections, or timeout."""
     log.info("Waiting for whisper server at %s:%d", host, port)
@@ -150,6 +172,31 @@ def _wait_for_port(host: str, port: int, timeout: float) -> None:
         f"Whisper server did not start within {timeout}s "
         f"on {host}:{port}"
     )
+
+
+def _ensure_server_alive(
+    process: subprocess.Popen,
+    cfg: WhisperConfig,
+) -> None:
+    """Fail fast if the spawned whisper-server died during startup.
+
+    `_wait_for_port` only proves that *something* accepts connections.
+    If another process grabbed the port between `_ensure_port_free` and
+    the child's bind, whisper-server exits and every later request
+    would hit the foreign listener (typically answered with HTTP 405).
+    A child that failed to bind exits almost immediately, so a short
+    grace period before declaring readiness catches it.
+    """
+    time.sleep(0.2)
+    if process.poll() is not None:
+        raise WhisperError(
+            f"whisper-server exited during startup (exit code "
+            f"{process.returncode}). Port "
+            f"{cfg.server_host}:{cfg.server_port} is probably already "
+            f"in use by another process — check it with "
+            f"`ss -tlnp | grep {cfg.server_port}` or change "
+            f"whisper.server_port / whisper.ensemble.secondary_port."
+        )
 
 
 def _transcribe_via_server(
@@ -185,7 +232,10 @@ def _transcribe_via_server(
         )
 
     try:
-        payload = response.json()
+        # Decode explicitly: quantized models can emit a broken multi-byte
+        # sequence, and letting requests guess the charset turns those bytes
+        # into U+FFFD litter inside the subtitles.
+        payload = json.loads(response.content.decode("utf-8", errors="replace"))
 
         if raw_sink is not None:
             raw_sink.append(payload)
@@ -215,11 +265,19 @@ def _parse_server_segments(payload: dict) -> list[WhisperSegment]:
     """
     raw = payload.get("segments") or []
     segments: list[WhisperSegment] = []
+    replacement_chars = 0
 
     for item in raw:
         text = (item.get("text") or "").strip()
         if not text:
             continue
+        if "\ufffd" in text:
+            # Invalid byte sequence from the model — drop the broken
+            # character instead of shipping it into the SRT.
+            replacement_chars += text.count("\ufffd")
+            text = text.replace("\ufffd", "").strip()
+            if not text:
+                continue
         try:
             start = float(item["start"])
             end = float(item["end"])
@@ -228,5 +286,12 @@ def _parse_server_segments(payload: dict) -> list[WhisperSegment]:
                 f"Malformed segment from whisper server: {item}"
             ) from exc
         segments.append(WhisperSegment(start=start, end=end, text=text))
+
+    if replacement_chars:
+        log.warning(
+            "Dropped %d undecodable character(s) from the whisper server "
+            "response (model emitted invalid UTF-8)",
+            replacement_chars,
+        )
 
     return segments
