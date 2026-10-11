@@ -8,6 +8,7 @@ Rules are applied in order from cheapest to most expensive. Every drop
 is categorized so the log can show a summary that helps tuning.
 """
 
+from dataclasses import replace
 import logging
 import re
 
@@ -16,6 +17,34 @@ from whisper_subtitle.models import OcrEvent, Subtitle
 
 log = logging.getLogger(__name__)
 
+# this function adds padding to SRT timestamp, start.time - 0.25 and end.time +0.25
+def pad_event_timestamps(
+    events: list[OcrEvent],
+    padding: float,
+) -> list[OcrEvent]:
+    """Extend each event's [start, end] by `padding` seconds on both sides.
+
+    Compensates for sampling phase: at 2 fps, an on-screen caption is
+    detected on average 250ms after it appears and 250ms before it
+    disappears. Padding by that amount recenters the timing around
+    the true window.
+
+    Start is clamped to 0.0 (can't go before the chunk begins). End
+    is unbounded — a padded end past the chunk boundary is harmless.
+
+    If padding <= 0, returns the input unchanged.
+    """
+    if padding <= 0:
+        return list(events)
+
+    return [
+        replace(
+            ev,
+            start=max(0.0, ev.start - padding),
+            end=ev.end + padding,
+        )
+        for ev in events
+    ]
 
 def filter_events(
     events: list[OcrEvent],
@@ -87,10 +116,10 @@ def _reject_reason(
     if ev.confidence < cfg.min_confidence:
         return "low_confidence"
 
-    if ev.duration < cfg.min_duration:
-        return "too_short"
-    if ev.duration > cfg.max_duration:
-        return "too_long"
+    # if ev.duration < cfg.min_duration:
+    #     return "too_short"
+    # if ev.duration > cfg.max_duration:
+    #     return "too_long"
 
     box_h = ev.box[3] - ev.box[1]
     ratio = box_h / frame_height

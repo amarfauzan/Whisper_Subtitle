@@ -32,6 +32,13 @@ class EnsembleConfig:
     llm_batch_size: int
 
 @dataclass(frozen=True)
+class UvrConfig:
+    enabled: bool
+    model: str
+    output_single_stem: str
+    model_dir: str
+
+@dataclass(frozen=True)
 class DiagnosticsConfig:
     enabled: bool
     abort_on_loop: bool
@@ -92,7 +99,8 @@ class OcrFilterConfig:
     max_box_height_ratio: float
     min_text_length: int
     min_confidence: float
-    max_text_repeats: int          # ← new
+    max_text_repeats: int 
+    timestamp_padding: float         
     blocklist_texts: tuple[str, ...]
     blocklist_patterns: tuple[str, ...]
 
@@ -149,6 +157,7 @@ class Config:
     transcription: TranscriptionConfig
     ocr: OcrConfig
     merge: MergeConfig
+    uvr: UvrConfig
 
 
 
@@ -195,6 +204,12 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             model=Path(os.environ["VAD_MODEL"]),
             max_merge_duration=raw["vad"]["max_merge_duration"],
             max_speech_duration=raw["vad"].get("max_speech_duration", 6.0),  # ← new
+        ),
+        uvr=UvrConfig(
+            enabled=raw.get("uvr", {}).get("enabled", False),
+            model=raw.get("uvr", {}).get("model", "UVR_MDXNET_Main.onnx"),
+            output_single_stem=raw.get("uvr", {}).get("output_single_stem", "Vocals"),
+            model_dir=raw.get("uvr", {}).get("model_dir", ""),
         ),
         translation=TranslationConfig(
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
@@ -281,6 +296,7 @@ def _load_ocr_config(raw: dict) -> OcrConfig:
             min_box_height_ratio=raw["filter"]["min_box_height_ratio"],
             max_box_height_ratio=raw["filter"]["max_box_height_ratio"],
             min_text_length=raw["filter"]["min_text_length"],
+            timestamp_padding=raw["filter"].get("timestamp_padding", 0.25), # default is 0.25
             min_confidence=raw["filter"]["min_confidence"],
             max_text_repeats=raw["filter"]["max_text_repeats"],   
             blocklist_texts=tuple(raw["filter"].get("blocklist_texts", [])),

@@ -13,6 +13,7 @@ from whisper_subtitle.ocr.filter import (
     events_to_subtitles,
     filter_events,
     filter_repeated_texts,
+    pad_event_timestamps,
 )
 from whisper_subtitle.transcription.vad_transcribe import transcribe_by_vad_segments
 from whisper_subtitle.ocr.grouper import group_detections
@@ -36,6 +37,7 @@ from whisper_subtitle.persistence import (
     save_raw_whisper_chunk,
     save_transcription,
 )
+from whisper_subtitle.media.vocal_separation import separate_vocals
 
 
 log = logging.getLogger(__name__)
@@ -92,12 +94,15 @@ def _run_whisper_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
 ) -> list[Subtitle]:
+
+    #if ensemble run this
     if cfg.whisper.ensemble.enabled:
         from whisper_subtitle.transcription.ensemble_pipeline import (
             process_chunks_with_ensemble,
         )
         return process_chunks_with_ensemble(chunks, cfg)
-
+    
+    #run whisper primary model only in server mode
     with make_whisper_backend(cfg.whisper) as backend:
         all_subs: list[Subtitle] = []
         for i, chunk in enumerate(chunks, start=1):
@@ -153,6 +158,7 @@ def _run_ocr_pipeline(
         len(all_dets), len(counting_events),
     )
 
+    #filter repeated text
     repeated = find_repeated_texts(
         counting_events, cfg.ocr.filter.max_text_repeats
     )
@@ -173,6 +179,14 @@ def _run_ocr_pipeline(
     log.info("Per-event filter: %d events kept", len(kept))
 
     kept = _run_llm_filter_if_enabled(kept, cfg)
+
+    # Pad timestamps to compensate for 2 fps sampling phase
+    kept = pad_event_timestamps(kept, cfg.ocr.filter.timestamp_padding)
+    if cfg.ocr.filter.timestamp_padding > 0:
+        log.info(
+            "Applied %.2fs timestamp padding to %d events",
+            cfg.ocr.filter.timestamp_padding, len(kept),
+        )
         # Save combined OCR output for diagnostics
     # Save combined OCR output for diagnostics
     if cfg.whisper.diagnostics.save_intermediates and chunks:
@@ -201,6 +215,7 @@ def _ocr_chunk_pass_a(
     patterns = [re.compile(p) for p in cfg.ocr.filter.blocklist_patterns]
     blocklist = {t.lower() for t in cfg.ocr.filter.blocklist_texts}
 
+    # apply the blocklist on detections- append to filered list
     filtered = []
     for d in detections:
         text = d.text.strip()
@@ -277,6 +292,11 @@ def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
 
 def _process_chunk_whisper(chunk, cfg, backend):
     audio = extract_audio(chunk.path)
+
+    #run with vocal remover 
+    if cfg.uvr.enabled:
+        audio = separate_vocals(audio, cfg.uvr)
+
     vad_segments = run_vad(audio, cfg.vad)
 
     # Clear raw accumulator for this chunk

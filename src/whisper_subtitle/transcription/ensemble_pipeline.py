@@ -17,6 +17,7 @@ from pathlib import Path
 
 from whisper_subtitle.config import Config
 from whisper_subtitle.media.ffmpeg import Chunk, extract_audio
+from whisper_subtitle.media.vocal_separation import separate_vocals
 from whisper_subtitle.models import Subtitle, VadSegment, WhisperSegment
 from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
 from whisper_subtitle.subtitles.timeline import shift_timeline
@@ -99,6 +100,11 @@ def process_chunks_with_ensemble(
         for i, chunk in enumerate(chunks, start=1):
             log.info("Secondary chunk %d/%d: %s", i, len(chunks), chunk.path.name)
             audio = extract_audio(chunk.path)
+
+            #run with vocal remover
+            if cfg.uvr.enabled:
+                audio = separate_vocals(audio, cfg.uvr)
+
             vad, _ = primary_cache[chunk.path]
             segs = transcribe_vad_segments(audio, vad, secondary, secondary_cfg)
             secondary_cache[chunk.path] = segs

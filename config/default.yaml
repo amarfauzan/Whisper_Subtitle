@@ -2,7 +2,7 @@ chunk_length_seconds: 600
 
 whisper:
   ensemble:
-    enabled: true              # opt-in for now
+    enabled: true             # opt-in for now
     secondary_port: 8081
     overlap_threshold: 0.4
     agree_threshold: 0.85
@@ -11,7 +11,7 @@ whisper:
     min_cue_chars: 2
     llm_adjudicate: true
     llm_batch_size: 50
-  mode: server  
+  mode: server
   strategy: vad_segments            # ← new: whole | vad_segments
   language: ko
   beam_size: 3
@@ -23,9 +23,9 @@ whisper:
   server_startup_timeout: 60.0
   server_request_timeout: 300.0
   diagnostics:
-    enabled: true
-    abort_on_loop: true
-    save_intermediates: true
+    enabled: false
+    abort_on_loop: false
+    save_intermediates: false
     save_raw_whisper: false
   
   vad_segments:
@@ -58,10 +58,10 @@ transcription:
 
 ocr:
   enabled: false
-  crop_top_ratio: 0.2
+  crop_top_ratio: 0.4
   crop_bottom_ratio: 0.05
-  crop_left_ratio: 0.1
-  crop_right_ratio: 0.1
+  crop_left_ratio: 0.15
+  crop_right_ratio: 0.15
   providers: ["CPUExecutionProvider"]
   sample_fps: 2
   rec_confidence: 0.5
@@ -79,6 +79,7 @@ ocr:
     max_box_height_ratio: 1.00
     min_text_length: 2
     min_confidence: 0.84
+    timestamp_padding: 0.25
     max_text_repeats: 8
     blocklist_texts: []
     blocklist_patterns:
@@ -95,3 +96,9 @@ merge:
   gap_fill_min_duration: 0.5
   gap_fill_prefix: ""
   parallel: true
+
+uvr:
+  enabled: false
+  model: UVR_MDXNET_Main.onnx
+  output_single_stem: Vocals
+  model_dir: ""

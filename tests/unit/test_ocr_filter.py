@@ -10,6 +10,7 @@ from whisper_subtitle.ocr.filter import (
     _reject_reason,
     events_to_subtitles,
     filter_events,
+    pad_event_timestamps,
 )
 
 
@@ -41,6 +42,7 @@ def make_cfg(**overrides) -> OcrFilterConfig:
         max_duration=8.0,
         min_box_height_ratio=0.02,   # 21.6 px on 1080
         max_box_height_ratio=0.15,   # 162 px on 1080
+        timestamp_padding=0.25,       # ← add th
         min_text_length=2,
         max_text_repeats=8,  
         min_confidence=0.75,
@@ -115,6 +117,55 @@ class TestDuration:
         events = [make_event(start=0.0, end=10.0)]  # 10s
         assert filter_events(events, make_cfg(), frame_height=FRAME_H) == []
 
+
+from whisper_subtitle.ocr.filter import pad_event_timestamps
+
+
+class TestPadEventTimestamps:
+    def test_empty(self):
+        assert pad_event_timestamps([], 0.25) == []
+
+    def test_zero_padding_returns_copy(self):
+        events = [make_event(start=1.0, end=2.0)]
+        result = pad_event_timestamps(events, 0.0)
+        assert result == events
+        assert result is not events  # new list
+
+    def test_pads_both_sides(self):
+        events = [make_event(start=1.0, end=2.0)]
+        result = pad_event_timestamps(events, 0.25)
+        assert len(result) == 1
+        assert result[0].start == pytest.approx(0.75)
+        assert result[0].end == pytest.approx(2.25)
+
+    def test_start_clamped_to_zero(self):
+        events = [make_event(start=0.1, end=1.0)]
+        result = pad_event_timestamps(events, 0.25)
+        assert result[0].start == 0.0
+        assert result[0].end == pytest.approx(1.25)
+
+    def test_preserves_text_and_box(self):
+        events = [make_event(
+            start=1.0, end=2.0, text="hello", box=(10, 20, 30, 40),
+        )]
+        result = pad_event_timestamps(events, 0.25)
+        assert result[0].text == "hello"
+        assert result[0].box == (10, 20, 30, 40)
+
+    def test_multiple_events(self):
+        events = [
+            make_event(start=1.0, end=2.0),
+            make_event(start=5.0, end=7.0),
+        ]
+        result = pad_event_timestamps(events, 0.25)
+        assert result[0].start == pytest.approx(0.75)
+        assert result[1].start == pytest.approx(4.75)
+        assert result[1].end == pytest.approx(7.25)
+
+    def test_negative_padding_is_noop(self):
+        events = [make_event(start=1.0, end=2.0)]
+        result = pad_event_timestamps(events, -0.5)
+        assert result == events
 
 # ---------------------------------------------------------------- box height
 
