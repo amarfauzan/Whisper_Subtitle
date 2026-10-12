@@ -1,7 +1,8 @@
 import pytest
 
 from whisper_subtitle.exceptions import VadError
-from whisper_subtitle.transcription.vad import parse_vad_output
+from whisper_subtitle.models import VadSegment
+from whisper_subtitle.transcription.vad import parse_vad_output, silence_intervals
 
 SAMPLE_OUTPUT = """\
 whisper_vad_segments_from_probs: found 3 segments
@@ -80,3 +81,34 @@ def test_segments_with_completion_line():
     )
     segments = parse_vad_output(output)
     assert len(segments) == 2
+
+
+class TestSilenceIntervals:
+    def seg(self, start, end):
+        return VadSegment(index=0, start=start, end=end)
+
+    def test_no_speech_returns_whole_duration(self):
+        assert silence_intervals([], 10.0) == [(0.0, 10.0)]
+
+    def test_single_segment_splits_before_and_after(self):
+        assert silence_intervals([self.seg(4.0, 6.0)], 10.0) == [(0.0, 4.0), (6.0, 10.0)]
+
+    def test_margin_shrinks_gaps(self):
+        gaps = silence_intervals([self.seg(4.0, 6.0)], 10.0, margin=0.5)
+        assert gaps == [(0.0, 3.5), (6.5, 10.0)]
+
+    def test_overlapping_segments_after_margin_merge(self):
+        gaps = silence_intervals(
+            [self.seg(4.0, 5.0), self.seg(5.4, 6.0)], 10.0, margin=0.5
+        )
+        # expanded: 3.5-5.5 and 4.9-6.5 overlap -> merged 3.5-6.5
+        assert gaps == [(0.0, 3.5), (6.5, 10.0)]
+
+    def test_continuous_speech_returns_empty(self):
+        assert silence_intervals([self.seg(0.0, 10.0)], 10.0) == []
+
+    def test_segment_touching_bounds_no_edge_gap(self):
+        gaps = silence_intervals(
+            [self.seg(0.0, 2.0), self.seg(8.0, 10.0)], 10.0
+        )
+        assert gaps == [(2.0, 8.0)]

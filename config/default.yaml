@@ -97,6 +97,8 @@ merge:
   keep_unrelated_ocr: true   # keep on-screen info cards that overlap speech
   unrelated_threshold: 0.3   # below this similarity = different content
   info_min_chars: 20         # on-screen info must be a full line, or contain a digit
+  ocr_silence_only: true     # in merged mode, OCR only the non-speech regions
+  speech_margin_seconds: 0.4 # pad speech regions before excluding them from OCR
 
 subtitles:
   max_chars_per_cue: 40      # split longer cues at sentence/word boundaries

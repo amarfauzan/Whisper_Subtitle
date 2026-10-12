@@ -17,6 +17,7 @@ def sample_and_detect(
     video_path: Path,
     engine: PaddleOcrEngine,
     cfg: OcrConfig,
+    keep_intervals: list[tuple[float, float]] | None = None,
 ) -> tuple[list[OcrDetection], int]:
     """Sample frames from a video and run OCR on each.
 
@@ -29,6 +30,9 @@ def sample_and_detect(
         engine: an already-constructed PaddleOcrEngine. Reused across
             calls so model loading is amortized.
         cfg: OCR configuration.
+        keep_intervals: optional list of (start, end) chunk-local time
+            ranges to sample. Frames outside these ranges are skipped.
+            None samples the whole video.
 
     Returns:
         (detections, cropped_frame_height). Detection boxes are relative
@@ -61,10 +65,16 @@ def sample_and_detect(
         interval = max(1, round(fps / cfg.sample_fps))
         expected_samples = max(1, total_frames // interval)
 
-        log.info(
-            "Sampling %s at %d fps (every %d frames, ~%d samples)",
-            video_path.name, cfg.sample_fps, interval, expected_samples,
-        )
+        if keep_intervals is not None:
+            log.info(
+                "Sampling %s at %d fps within %d silence interval(s)",
+                video_path.name, cfg.sample_fps, len(keep_intervals),
+            )
+        else:
+            log.info(
+                "Sampling %s at %d fps (every %d frames, ~%d samples)",
+                video_path.name, cfg.sample_fps, interval, expected_samples,
+            )
         if (crop_y1, crop_y2, crop_x1, crop_x2) != (0, frame_h, 0, frame_w):
             log.info(
                 "Cropping to y=[%d:%d] x=[%d:%d] of %dx%d",
@@ -74,6 +84,7 @@ def sample_and_detect(
         detections: list[OcrDetection] = []
         frame_number = 0
         sampled = 0
+        interval_idx = 0
 
         while True:
             ok, frame = cap.read()
@@ -82,6 +93,20 @@ def sample_and_detect(
 
             if frame_number % interval == 0:
                 timestamp = frame_number / fps
+                if keep_intervals is not None:
+                    # Advance to the interval that could contain this time.
+                    while (
+                        interval_idx < len(keep_intervals)
+                        and keep_intervals[interval_idx][1] <= timestamp
+                    ):
+                        interval_idx += 1
+                    if (
+                        interval_idx >= len(keep_intervals)
+                        or timestamp < keep_intervals[interval_idx][0]
+                    ):
+                        frame_number += 1
+                        continue
+
                 cropped = frame[crop_y1:crop_y2, crop_x1:crop_x2]
                 found = engine.process_frame(cropped, frame_time=timestamp)
                 detections.extend(found)

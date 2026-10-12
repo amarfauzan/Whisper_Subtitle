@@ -44,7 +44,7 @@ _MAX_VAD_EXTENSION = 1.0
 def process_chunks_with_ensemble(
     chunks: list[Chunk],
     cfg: Config,
-) -> list[Subtitle]:
+) -> tuple[list[Subtitle], dict[Path, list[VadSegment]]]:
     if not cfg.whisper.ensemble.enabled:
         raise RuntimeError(
             "process_chunks_with_ensemble called but ensemble.enabled is False"
@@ -181,7 +181,8 @@ def process_chunks_with_ensemble(
         "Ensemble complete: %d subtitles from %d chunks",
         len(all_subs), len(chunks),
     )
-    return all_subs
+    vad_by_chunk = {path: vad for path, (vad, _) in primary_cache.items()}
+    return all_subs, vad_by_chunk
 
 
 def _diagnose_and_maybe_abort(

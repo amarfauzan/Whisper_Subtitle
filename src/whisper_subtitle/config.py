@@ -140,6 +140,8 @@ class MergeConfig:
     keep_unrelated_ocr: bool = True
     unrelated_threshold: float = 0.3
     info_min_chars: int = 20
+    ocr_silence_only: bool = True
+    speech_margin_seconds: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -262,6 +264,8 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             keep_unrelated_ocr=raw["merge"].get("keep_unrelated_ocr", True),
             unrelated_threshold=raw["merge"].get("unrelated_threshold", 0.3),
             info_min_chars=raw["merge"].get("info_min_chars", 20),
+            ocr_silence_only=raw["merge"].get("ocr_silence_only", True),
+            speech_margin_seconds=raw["merge"].get("speech_margin_seconds", 0.4),
         ),
         subtitles=SubtitleConfig(
             max_chars_per_cue=raw.get("subtitles", {}).get("max_chars_per_cue", 40),

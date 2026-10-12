@@ -2,14 +2,14 @@
 
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from whisper_subtitle.config import Config
 from whisper_subtitle.exceptions import PipelineError
+from whisper_subtitle.media.audio import audio_duration
 from whisper_subtitle.media.ffmpeg import Chunk, extract_audio, split_video
 from whisper_subtitle.media.vocal_separation import separate_vocals
-from whisper_subtitle.models import OcrDetection, OcrEvent, Subtitle
+from whisper_subtitle.models import OcrDetection, OcrEvent, Subtitle, VadSegment
 from whisper_subtitle.ocr.engine import PaddleOcrEngine
 from whisper_subtitle.ocr.filter import (
     events_to_subtitles,
@@ -31,7 +31,7 @@ from whisper_subtitle.subtitles.merger import merge_vad_and_whisper
 from whisper_subtitle.subtitles.split import split_long_subtitles
 from whisper_subtitle.subtitles.srt import render_srt
 from whisper_subtitle.subtitles.timeline import shift_ocr_events, shift_timeline
-from whisper_subtitle.transcription.vad import run_vad
+from whisper_subtitle.transcription.vad import run_vad, silence_intervals
 from whisper_subtitle.transcription.vad_transcribe import transcribe_vad_segments
 from whisper_subtitle.transcription.whisper_backend import make_whisper_backend
 
@@ -81,11 +81,10 @@ def process_video(input_path: Path, cfg: Config, *, translate: bool = False) -> 
 def _process_all_merged(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
     engine = _build_ocr_engine(cfg)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        whisper_future = pool.submit(_run_whisper_over_chunks, chunks, cfg)
-        ocr_future = pool.submit(_run_ocr_over_chunks, chunks, cfg, engine)
-        whisper_subs = whisper_future.result()
-        ocr_events = ocr_future.result()
+    # Whisper runs first so its VAD speech boundaries are available to
+    # tell OCR which (silence) regions actually need scanning.
+    whisper_subs, vad_by_chunk = _run_whisper_over_chunks(chunks, cfg)
+    ocr_events = _run_ocr_over_chunks(chunks, cfg, engine, vad_by_chunk)
 
     log.info(
         "Chunk processing complete: %d whisper subs, %d OCR events",
@@ -99,30 +98,70 @@ def _process_all_merged(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
 def _run_whisper_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
-) -> list[Subtitle]:
+) -> tuple[list[Subtitle], dict[Path, list[VadSegment]]]:
+    """Transcribe every chunk and return (subtitles, VAD per chunk)."""
 
-    #if ensemble run this
     if cfg.whisper.ensemble.enabled:
         from whisper_subtitle.transcription.ensemble_pipeline import (
             process_chunks_with_ensemble,
         )
         return process_chunks_with_ensemble(chunks, cfg)
-    
-    #run whisper primary model only in server mode
+
     with make_whisper_backend(cfg.whisper) as backend:
         all_subs: list[Subtitle] = []
+        vad_by_chunk: dict[Path, list[VadSegment]] = {}
         for i, chunk in enumerate(chunks, start=1):
             log.info("Whisper chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-            all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
-    return all_subs
+            subs, vad = _process_chunk_whisper(chunk, cfg, backend)
+            all_subs.extend(subs)
+            vad_by_chunk[chunk.path] = vad
+    return all_subs, vad_by_chunk
+
 
 def _run_ocr_over_chunks(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
+    vad_by_chunk: dict[Path, list[VadSegment]] | None = None,
 ) -> list[OcrEvent]:
-    """Used by merged mode. Calls the same pipeline as OCR-only."""
-    return _run_ocr_pipeline(chunks, cfg, engine)
+    """Run OCR for merged mode.
+
+    With `ocr_silence_only` (the default) and VAD available, OCR only
+    scans the non-speech regions — the parts that can actually become
+    gap-fills — which is both faster and free of ASR duplication.
+    Otherwise the whole video is scanned.
+    """
+    keep_by_chunk: dict[Path, list[tuple[float, float]]] | None = None
+    if cfg.merge.ocr_silence_only and vad_by_chunk is not None:
+        keep_by_chunk = _silence_intervals_by_chunk(chunks, cfg, vad_by_chunk)
+
+    return _run_ocr_pipeline(
+        chunks, cfg, engine, keep_intervals_by_chunk=keep_by_chunk
+    )
+
+
+def _silence_intervals_by_chunk(
+    chunks: list[Chunk],
+    cfg: Config,
+    vad_by_chunk: dict[Path, list[VadSegment]],
+) -> dict[Path, list[tuple[float, float]]]:
+    """Map each chunk to its non-speech time ranges (chunk-local)."""
+    keep: dict[Path, list[tuple[float, float]]] = {}
+    margin = cfg.merge.speech_margin_seconds
+    for chunk in chunks:
+        audio = extract_audio(chunk.path)
+        if cfg.uvr.enabled:
+            audio = separate_vocals(audio, cfg.uvr)
+        duration = audio_duration(audio)
+        vad = vad_by_chunk.get(chunk.path, [])
+        intervals = silence_intervals(vad, duration, margin)
+        keep[chunk.path] = intervals
+        log.info(
+            "OCR silence regions for %s: %d (%.1fs of %.1fs)",
+            chunk.path.name, len(intervals),
+            sum(e - s for s, e in intervals), duration,
+        )
+    return keep
 
 def _process_all_ocr(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
     engine = _build_ocr_engine(cfg)
@@ -133,6 +172,7 @@ def _run_ocr_pipeline(
     chunks: list[Chunk],
     cfg: Config,
     engine: PaddleOcrEngine,
+    keep_intervals_by_chunk: dict[Path, list[tuple[float, float]]] | None = None,
 ) -> list[OcrEvent]:
     """Run the full OCR pipeline. Returns final filtered events.
 
@@ -147,6 +187,9 @@ def _run_ocr_pipeline(
           -> final grouper
           -> per-event filter
           -> optional LLM filter
+
+    When `keep_intervals_by_chunk` is given, only those time ranges are
+    sampled (merged mode scans silence only).
     """
     all_dets: list[OcrDetection] = []
     counting_events: list[OcrEvent] = []
@@ -158,7 +201,12 @@ def _run_ocr_pipeline(
 
     for i, chunk in enumerate(chunks, start=1):
         log.info("OCR chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-        dets, events_a, h = _ocr_chunk_pass_a(chunk, cfg, engine, patterns, blocklist)
+        intervals = None
+        if keep_intervals_by_chunk is not None:
+            intervals = keep_intervals_by_chunk.get(chunk.path)
+        dets, events_a, h = _ocr_chunk_pass_a(
+            chunk, cfg, engine, patterns, blocklist, intervals
+        )
         all_dets.extend(dets)
         counting_events.extend(events_a)
         frame_heights.add(h)
@@ -237,9 +285,12 @@ def _ocr_chunk_pass_a(
     engine: PaddleOcrEngine,
     blocklist_patterns: list[re.Pattern[str]],
     blocklist: set[str],
+    keep_intervals: list[tuple[float, float]] | None = None,
 ) -> tuple[list[OcrDetection], list[OcrEvent], int]:
     """One chunk's OCR pass: sample, blocklist, group, shift to global time."""
-    detections, frame_height = sample_and_detect(chunk.path, engine, cfg.ocr)
+    detections, frame_height = sample_and_detect(
+        chunk.path, engine, cfg.ocr, keep_intervals=keep_intervals
+    )
 
     # Apply the blocklist on detections — append to filtered list
     filtered = []
@@ -303,20 +354,14 @@ def _build_ocr_engine(cfg: Config) -> PaddleOcrEngine:
 
 
 def _process_all_whisper(chunks: list[Chunk], cfg: Config) -> list[Subtitle]:
-    if cfg.whisper.ensemble.enabled:
-        from whisper_subtitle.transcription.ensemble_pipeline import (
-            process_chunks_with_ensemble,
-        )
-        return process_chunks_with_ensemble(chunks, cfg)
+    subs, _ = _run_whisper_over_chunks(chunks, cfg)
+    return subs
 
-    with make_whisper_backend(cfg.whisper) as backend:
-        all_subs: list[Subtitle] = []
-        for i, chunk in enumerate(chunks, start=1):
-            log.info("Whisper chunk %d/%d: %s", i, len(chunks), chunk.path.name)
-            all_subs.extend(_process_chunk_whisper(chunk, cfg, backend))
-    return all_subs
-
-def _process_chunk_whisper(chunk, cfg, backend):
+def _process_chunk_whisper(
+    chunk: Chunk,
+    cfg: Config,
+    backend,
+) -> tuple[list[Subtitle], list[VadSegment]]:
     audio = extract_audio(chunk.path)
 
     # Optional vocal separation, applied before VAD so both the VAD
@@ -369,7 +414,7 @@ def _process_chunk_whisper(chunk, cfg, backend):
     )
     if chunk.offset:
         subtitles = shift_timeline(subtitles, chunk.offset)
-    return subtitles
+    return subtitles, vad_segments
 
 
 def _run_translation(

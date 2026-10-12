@@ -87,3 +87,47 @@ def run_vad(audio_path: Path, cfg: VadConfig) -> list[VadSegment]:
         )
 
     return parse_vad_output(result.stderr)
+
+
+def silence_intervals(
+    segments: list[VadSegment],
+    duration: float,
+    margin: float = 0.0,
+) -> list[tuple[float, float]]:
+    """Return the non-speech time ranges of ``[0, duration]``.
+
+    Each speech segment is expanded by ``margin`` on both sides (so a
+    caption at the very edge of speech is not half-sampled) and clamped
+    to the audio bounds. Overlapping expanded segments are merged, then
+    the gaps between them are returned.
+
+    With no speech at all the whole duration is returned; with continuous
+    speech an empty list is returned.
+    """
+    if not segments:
+        return [(0.0, duration)]
+
+    expanded: list[tuple[float, float]] = []
+    for seg in segments:
+        start = max(0.0, seg.start - margin)
+        end = min(duration, seg.end + margin)
+        if end > start:
+            expanded.append((start, end))
+    expanded.sort()
+
+    merged: list[list[float]] = []
+    for start, end in expanded:
+        if not merged or start > merged[-1][1]:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+
+    gaps: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start, end in merged:
+        if start > cursor:
+            gaps.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < duration:
+        gaps.append((cursor, duration))
+    return gaps
