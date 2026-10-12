@@ -105,9 +105,15 @@ def extract_audio(video_path: Path) -> Path:
     Skips if the .wav already exists (resume support).
     """
     audio_path = video_path.with_suffix(".wav")
+    audio_path_vocal = video_path.parent / f"{video_path.stem}_vocals.wav"
+    print(audio_path_vocal)
 
-    if audio_path.exists():
-        log.info("Audio already exists, skipping: %s", audio_path.name)
+    #if both exist, return the vocal
+    if audio_path.exists() and audio_path_vocal.exists():
+        log.info("Vocal Audio already exists, skipping: %s, using cleaned audio", audio_path.name)
+        return audio_path_vocal
+    elif audio_path.exists():
+        log.info("Audio already exists, skipping: %s, using raw audio", audio_path.name,)
         return audio_path
 
     command = [

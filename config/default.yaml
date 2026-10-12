@@ -2,7 +2,7 @@ chunk_length_seconds: 600
 
 whisper:
   ensemble:
-    enabled: true             # opt-in for now
+    enabled: false             # opt-in for now
     secondary_port: 8081
     model: deepseek-chat
     overlap_threshold: 0.4
@@ -50,7 +50,7 @@ translation:
   batch_size: 100
   max_retries: 3
   min_split_size: 50
-  context: ""
+  context: "A livestream of a kpop girl group called Rescene, her name is Liv. she is having her birthday, they have songs called Love Attack, Bloom, Pinball, uh-oh, Love Echo, Bam Bam Bam, Deja Vu"
 
 transcription:
   enabled: true
