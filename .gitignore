@@ -1,3 +1,4 @@
+example/
 .venv/
 __pycache__/
 *.pyc

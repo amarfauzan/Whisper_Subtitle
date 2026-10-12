@@ -2,7 +2,7 @@ chunk_length_seconds: 600
 
 whisper:
   ensemble:
-    enabled: true             # opt-in for now
+    enabled: false             # opt-in for now
     secondary_port: 8081
     model: deepseek-chat
     overlap_threshold: 0.4
@@ -18,8 +18,8 @@ whisper:
   beam_size: 3
   best_of: 3
   max_line_length: 30
-  server_host: 127.0.0.1
-  server_port: 8080
+  server_host: 127.0.0.3
+  server_port: 8085
   server_threads: 8
   server_startup_timeout: 60.0
   server_request_timeout: 300.0
@@ -50,7 +50,7 @@ translation:
   batch_size: 100
   max_retries: 3
   min_split_size: 50
-  context: ""
+  context: "a korean girl group called Rescene, members name are Woni, Minami, Zena, May, Liv, they went to USJ in japan for fun, they have songs called Pinball,Bloom,Love Attack, Deja VU"
 
 transcription:
   enabled: true
