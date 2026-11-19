@@ -15,14 +15,58 @@ log = logging.getLogger(__name__)
 
 _MARKER_RE = re.compile(r"<<<SRT_(\d+)>>>")
 
+_LANG_CODES = {
+    "korean": "ko",
+    "english": "en",
+    "japanese": "ja",
+    "chinese": "zh",
+    "spanish": "es",
+    "french": "fr",
+    "german": "de",
+    "russian": "ru",
+    "portuguese": "pt",
+    "italian": "it",
+}
 
-def translate_srt_file(srt_path: Path, cfg: TranslationConfig) -> Path:
-    """Translate a standalone SRT file. No source hints available."""
+
+def _lang_code(language: str) -> str:
+    """Map a language name to an ISO code (falls back to the first two letters)."""
+    return _LANG_CODES.get(language.strip().lower(), language.strip().lower()[:2])
+
+
+def _build_local_prompt(marked: str, cfg: TranslationConfig) -> str:
+    """Build the prompt format expected by TranslateGemma."""
+    source = cfg.source_language
+    target = cfg.target_language
+    src = _lang_code(source)
+    tgt = _lang_code(target)
+    return (
+        f"You are a professional {source} ({src}) to {target} ({tgt}) translator. "
+        f"Your goal is to accurately convey the meaning and nuances of the "
+        f"original {source} text while adhering to {target} grammar, "
+        f"vocabulary, and cultural sensitivities.\n"
+        f"Produce only the {target} translation, without any additional "
+        f"explanations or commentary. Please translate the following "
+        f"{source} text into {target}:\n\n\n{marked}"
+    )
+
+
+def _make_client(cfg: TranslationConfig) -> OpenAI:
+    """Build an OpenAI client for the configured translation provider."""
+    if cfg.provider == "local":
+        return OpenAI(
+            api_key="local",
+            base_url=f"http://127.0.0.1:{cfg.server_port}/v1",
+        )
     if not cfg.api_key:
         raise TranslationError(
             "DEEPSEEK_API_KEY is not set. Add it to .env or skip --translate."
         )
+    return OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
 
+
+def translate_srt_file(srt_path: Path, cfg: TranslationConfig) -> Path:
+    """Translate a standalone SRT file. No source hints available."""
     source_text = srt_path.read_text(encoding="utf-8-sig")
     subtitles = parse_srt(source_text)
     if not subtitles:
@@ -43,7 +87,7 @@ def _translate_and_write(
         sum(1 for s in subtitles if s.source_hint),
     )
 
-    client = OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+    client = _make_client(cfg)
     translated_texts = _translate_all(subtitles, cfg, client)   # ← this
 
     translated_subtitles = [
@@ -114,17 +158,15 @@ def _translate_batch(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             log.debug("API call (attempt %d/%d)", attempt, cfg.max_retries)
-            response = client.chat.completions.create(
-                model=cfg.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                timeout=180,
-                extra_body=(
-                    {"thinking": {"type": "disabled"}}
-                    if cfg.disable_thinking
-                    else None
-                ),
-            )
+            kwargs: dict[str, object] = {
+                "model": cfg.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1 if cfg.provider == "local" else 0.3,
+                "timeout": cfg.request_timeout,
+            }
+            if cfg.provider == "deepseek" and cfg.disable_thinking:
+                kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            response = client.chat.completions.create(**kwargs)  # type: ignore[call-overload]
             content = (response.choices[0].message.content or "").strip()
             parsed = _parse_marked_response(content, expected=len(subtitles))
             if parsed is not None:
@@ -150,8 +192,6 @@ def translate_subtitles(
     Uses source_hint when present to give the LLM two sources of truth.
     Writes <source_srt stem>_translated.srt next to the source file.
     """
-    if not cfg.api_key:
-        raise TranslationError("DEEPSEEK_API_KEY is not set.")
     if not subtitles:
         raise TranslationError("No subtitles to translate.")
 
@@ -161,7 +201,7 @@ def translate_subtitles(
         sum(1 for s in subtitles if s.source_hint),
     )
 
-    client = OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+    client = _make_client(cfg)
     translated_texts = _translate_all(subtitles, cfg, client)
 
     translated_subtitles = [
@@ -286,6 +326,9 @@ RULE 5 — DEFAULT:
   When uncertain between correction, rephrase, and supplement,
   choose correction or rephrase.
 """
+
+    if cfg.provider == "local":
+        return _build_local_prompt(marked, cfg)
 
     return f"""\
 Translate the following {cfg.source_language} subtitles into natural {cfg.target_language}.

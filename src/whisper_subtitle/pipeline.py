@@ -380,5 +380,12 @@ def _run_translation(
     """Optional translation step, lazily imported."""
     from whisper_subtitle.translation.translator import translate_subtitles
 
-    translated = translate_subtitles(subtitles, cfg.translation, source_srt)
+    if cfg.translation.provider == "local":
+        from whisper_subtitle.translation.local_server import LlamaServer
+
+        with LlamaServer(cfg.translation):
+            translated = translate_subtitles(subtitles, cfg.translation, source_srt)
+    else:
+        translated = translate_subtitles(subtitles, cfg.translation, source_srt)
+
     log.info("Translated SRT: %s", translated)

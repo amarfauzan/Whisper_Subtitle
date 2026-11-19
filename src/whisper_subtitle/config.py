@@ -85,6 +85,11 @@ class TranslationConfig:
     max_retries: int
     min_split_size: int
     context: str
+    provider: str              # "deepseek" or "local"
+    request_timeout: float
+    server_exe: Path
+    server_model: Path
+    server_port: int
 
 @dataclass(frozen=True)
 class TranscriptionConfig:
@@ -248,6 +253,11 @@ def load_config(yaml_path: Path = Path("config/default.yaml")) -> Config:
             max_retries=raw["translation"]["max_retries"],
             min_split_size=raw["translation"]["min_split_size"],
             context=raw["translation"]["context"],
+            provider=raw["translation"].get("provider", "deepseek"),
+            request_timeout=raw["translation"].get("request_timeout", 180.0),
+            server_exe=Path(os.environ.get("LOCAL_LLM_SERVER_EXE", "llama-server")),
+            server_model=Path(os.environ.get("LOCAL_LLM_MODEL", "")),
+            server_port=int(os.environ.get("LOCAL_LLM_PORT", "8080")),
         ),
         transcription=TranscriptionConfig(
             enabled=raw.get("transcription", {}).get("enabled", True),

@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,6 +8,7 @@ from whisper_subtitle.exceptions import TranslationError
 from whisper_subtitle.models import Subtitle
 from whisper_subtitle.translation.translator import (
     _build_prompt,
+    _make_client,
     _parse_marked_response,
     _translate_batch,
 )
@@ -30,6 +32,11 @@ def make_cfg(**overrides) -> TranslationConfig:
         max_retries=3,
         min_split_size=50,
         context="",
+        provider="deepseek",
+        request_timeout=180.0,
+        server_exe=Path("/fake/llama-server"),
+        server_model=Path("/fake/model.gguf"),
+        server_port=8080,
     )
     base.update(overrides)
     return TranslationConfig(**base)
@@ -95,6 +102,32 @@ class TestBuildPrompt:
     def test_no_context_block_when_empty(self):
         prompt = _build_prompt([sub("x")], make_cfg(context=""))
         assert "Context for the translation" not in prompt
+
+
+class TestLocalPrompt:
+    def test_uses_translategemma_format(self):
+        prompt = _build_prompt([sub("안녕하세요")], make_cfg(provider="local"))
+        assert "professional Korean (ko) to English (en) translator" in prompt
+        assert "Produce only the English translation" in prompt
+        assert "Please translate the following Korean text into English:" in prompt
+        assert "<<<SRT_001>>>" in prompt
+        assert "안녕하세요" in prompt
+
+    def test_local_prompt_omits_deepseek_rules(self):
+        prompt = _build_prompt([sub("x")], make_cfg(provider="local"))
+        assert "DUAL-SOURCE ENTRIES" not in prompt
+        assert "Every <<<SRT_NNN>>> marker represents ONE subtitle" not in prompt
+
+    def test_deepseek_prompt_unchanged(self):
+        prompt = _build_prompt([sub("x")], make_cfg())
+        assert "Translate the following Korean subtitles" in prompt
+        assert "Every <<<SRT_NNN>>> marker represents ONE subtitle" in prompt
+
+    def test_unknown_language_falls_back_to_two_letters(self):
+        prompt = _build_prompt(
+            [sub("x")], make_cfg(provider="local", source_language="Thai")
+        )
+        assert "Thai (th)" in prompt
 
 
 # ---------------------------------------------------------------- parsing
@@ -183,3 +216,59 @@ class TestTranslateSubtitlesWithHints:
 
         assert "[WHISPER] 원문" in captured["prompt"]
         assert "[OCR] 원믄" in captured["prompt"]
+
+
+# ---------------------------------------------------------------- providers
+
+
+class TestTranslateBatchProviders:
+    def test_local_uses_low_temperature_and_no_thinking(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = fake_response(
+            "<<<SRT_001>>>\nok"
+        )
+        _translate_batch([sub("x")], make_cfg(provider="local"), client)
+        kwargs = client.chat.completions.create.call_args.kwargs
+        assert kwargs["temperature"] == 0.1
+        assert "extra_body" not in kwargs
+
+    def test_deepseek_uses_default_temperature_and_thinking_off(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = fake_response(
+            "<<<SRT_001>>>\nok"
+        )
+        _translate_batch([sub("x")], make_cfg(), client)
+        kwargs = client.chat.completions.create.call_args.kwargs
+        assert kwargs["temperature"] == 0.3
+        assert kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    def test_deepseek_respects_disable_thinking_false(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = fake_response(
+            "<<<SRT_001>>>\nok"
+        )
+        _translate_batch([sub("x")], make_cfg(disable_thinking=False), client)
+        assert "extra_body" not in client.chat.completions.create.call_args.kwargs
+
+    def test_timeout_comes_from_config(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = fake_response(
+            "<<<SRT_001>>>\nok"
+        )
+        _translate_batch([sub("x")], make_cfg(request_timeout=42.0), client)
+        assert client.chat.completions.create.call_args.kwargs["timeout"] == 42.0
+
+
+class TestMakeClient:
+    def test_local_points_at_server_port(self):
+        client = _make_client(make_cfg(provider="local", api_key=""))
+        assert client.base_url.host == "127.0.0.1"
+        assert client.base_url.port == 8080
+
+    def test_deepseek_requires_api_key(self):
+        with pytest.raises(TranslationError, match="DEEPSEEK_API_KEY"):
+            _make_client(make_cfg(api_key=""))
+
+    def test_deepseek_uses_configured_base_url(self):
+        client = _make_client(make_cfg())
+        assert client.base_url.host == "example.invalid"
